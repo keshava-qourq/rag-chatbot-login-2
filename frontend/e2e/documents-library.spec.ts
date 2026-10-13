@@ -168,13 +168,11 @@ test.describe("Document library screen", () => {
     await signUpFreshAccount(page);
     await expect(page.getByText("existing.pdf")).toBeVisible();
 
-    await page
-      .getByLabel(/choose documents to upload/i)
-      .setInputFiles({
-        name: "meeting-minutes.txt",
-        mimeType: "text/plain",
-        buffer: Buffer.from("notes"),
-      });
+    await page.getByLabel(/choose documents to upload/i).setInputFiles({
+      name: "meeting-minutes.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("notes"),
+    });
 
     const newHeading = page.getByText("meeting-minutes.txt");
     await expect(newHeading).toBeVisible();
@@ -225,15 +223,15 @@ test.describe("Document library screen", () => {
     await signUpFreshAccount(page);
     await expect(page.getByText(/no documents yet/i)).toBeVisible();
 
-    await page
-      .getByLabel(/choose documents to upload/i)
-      .setInputFiles({
-        name: "spreadsheet.xlsx",
-        mimeType: "application/vnd.ms-excel",
-        buffer: Buffer.from("binary"),
-      });
+    await page.getByLabel(/choose documents to upload/i).setInputFiles({
+      name: "spreadsheet.xlsx",
+      mimeType: "application/vnd.ms-excel",
+      buffer: Buffer.from("binary"),
+    });
 
-    await expect(page.getByRole("alert").filter({ hasText: /not a supported file type/i })).toBeVisible();
+    await expect(
+      page.getByRole("alert").filter({ hasText: /not a supported file type/i }),
+    ).toBeVisible();
     await expect(page.getByText(/no documents yet/i)).toBeVisible();
     await expect(page.getByText("spreadsheet.xlsx")).toHaveCount(0);
   });
