@@ -349,7 +349,10 @@ export default function Documents() {
             aria-labelledby="delete-document-dialog-title"
             className="w-full max-w-sm rounded-[var(--brand-radius)] border border-slate-200 bg-white p-6 shadow-lg"
           >
-            <h2 id="delete-document-dialog-title" className="text-base font-semibold text-slate-900">
+            <h2
+              id="delete-document-dialog-title"
+              className="text-base font-semibold text-slate-900"
+            >
               {"Delete this document?"}
             </h2>
             <p className="mt-2 text-sm text-slate-600">

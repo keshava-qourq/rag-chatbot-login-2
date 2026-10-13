@@ -281,9 +281,7 @@ describe("Documents library", () => {
     const heading = await screen.findByText("broken.pdf");
     const row = heading.closest("li") as HTMLElement;
     expect(within(row).getByText(/failed/i)).toBeInTheDocument();
-    expect(
-      within(row).getByText(/could not extract text from this file/i),
-    ).toBeInTheDocument();
+    expect(within(row).getByText(/could not extract text from this file/i)).toBeInTheDocument();
   });
 
   it("AC-025: Retry calls POST /documents/{id}/retry and updates the row to Queued, clearing the failure reason", async () => {
@@ -343,9 +341,7 @@ describe("Documents library", () => {
 
     expect(await screen.findByText("Retry failed.")).toBeInTheDocument();
     expect(within(row).getByText(/failed/i)).toBeInTheDocument();
-    expect(
-      within(row).getByText(/could not extract text from this file/i),
-    ).toBeInTheDocument();
+    expect(within(row).getByText(/could not extract text from this file/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /dismiss action error/i }));
     expect(screen.queryByText("Retry failed.")).not.toBeInTheDocument();

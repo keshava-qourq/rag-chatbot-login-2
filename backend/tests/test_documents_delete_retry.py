@@ -107,9 +107,7 @@ def document_exists(document_id: str) -> bool:
         session.close()
 
 
-def set_document_status(
-    document_id: str, status: str, failure_reason: str | None = None
-) -> None:
+def set_document_status(document_id: str, status: str, failure_reason: str | None = None) -> None:
     session = SessionLocal()
     try:
         document = session.get(Document, uuid.UUID(document_id))
@@ -167,7 +165,11 @@ def test_delete_of_non_ready_document_leaves_no_chunks_and_no_enqueue(
     process_to_ready(document_id, monkeypatch)
     assert chunk_count(document_id) >= 1
 
-    failure_reason = "Something went wrong while processing this file - try again." if status == "failed" else None
+    failure_reason = (
+        "Something went wrong while processing this file - try again."
+        if status == "failed"
+        else None
+    )
     set_document_status(document_id, status, failure_reason)
 
     enqueue_calls: list[str] = []
@@ -234,9 +236,7 @@ def test_retry_deletes_chunks_reenqueues_and_returns_queued_with_null_failure_re
     process_to_ready(document_id, monkeypatch)
     assert chunk_count(document_id) >= 1
 
-    set_document_status(
-        document_id, "failed", "Processing service unavailable - try again."
-    )
+    set_document_status(document_id, "failed", "Processing service unavailable - try again.")
 
     enqueue_calls: list[str] = []
 
