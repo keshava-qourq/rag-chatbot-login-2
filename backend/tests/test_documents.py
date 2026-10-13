@@ -61,6 +61,17 @@ def make_pdf_bytes(num_pages: int) -> bytes:
     return buffer.getvalue()
 
 
+def make_docx_bytes(paragraphs: list[str] | None = None) -> bytes:
+    from docx import Document as DocxDocument
+
+    doc = DocxDocument()
+    for text in paragraphs or ["hello from a docx file"]:
+        doc.add_paragraph(text)
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()
+
+
 def txt_file(name: str = "notes.txt", content: bytes = b"hello world") -> tuple:
     return (name, io.BytesIO(content), "text/plain")
 
@@ -97,6 +108,53 @@ def test_most_recently_uploaded_document_appears_first_in_list() -> None:
     assert body[1]["filename"] == "first.txt"
 
 
+def test_accepted_docx_upload_is_queued_and_appears_in_the_list() -> None:
+    client = signed_up_client()
+    docx_bytes = make_docx_bytes()
+
+    response = client.post(
+        "/documents",
+        files={
+            "files": (
+                "report.docx",
+                io.BytesIO(docx_bytes),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body[0]["status"] == "queued"
+    assert body[0]["filename"] == "report.docx"
+
+    listed = client.get("/documents").json()
+    assert any(doc["filename"] == "report.docx" for doc in listed)
+
+
+def test_accepted_markdown_upload_is_queued_and_appears_in_the_list() -> None:
+    client = signed_up_client()
+
+    response = client.post(
+        "/documents",
+        files={
+            "files": (
+                "readme.md",
+                io.BytesIO(b"# Title\n\nSome markdown body text."),
+                "text/markdown",
+            )
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body[0]["status"] == "queued"
+    assert body[0]["filename"] == "readme.md"
+
+    listed = client.get("/documents").json()
+    assert any(doc["filename"] == "readme.md" for doc in listed)
+
+
 # ---------------------------------------------------------------------------
 # AC-011: oversized file and over-page-limit file are rejected, naming the
 # limit and the actual value.
@@ -126,6 +184,17 @@ def test_oversized_file_creates_no_document_record(monkeypatch: pytest.MonkeyPat
     assert client.get("/documents").json() == []
 
 
+def test_oversized_file_is_rejected_before_any_s3_write(
+    monkeypatch: pytest.MonkeyPatch, stub_s3: list[tuple[str, bytes, str]]
+) -> None:
+    monkeypatch.setenv("MAX_UPLOAD_BYTES", "10")
+    client = signed_up_client()
+
+    client.post("/documents", files={"files": txt_file("big.txt", b"x" * 100)})
+
+    assert stub_s3 == []
+
+
 def test_over_page_limit_pdf_is_rejected_naming_limit_and_actual_pages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -142,6 +211,22 @@ def test_over_page_limit_pdf_is_rejected_naming_limit_and_actual_pages(
     detail = response.json()["detail"]
     assert "1" in detail
     assert "3" in detail
+
+
+def test_over_page_limit_pdf_creates_no_document_record_and_no_s3_write(
+    monkeypatch: pytest.MonkeyPatch, stub_s3: list[tuple[str, bytes, str]]
+) -> None:
+    monkeypatch.setenv("MAX_UPLOAD_PAGES", "1")
+    client = signed_up_client()
+    pdf_bytes = make_pdf_bytes(3)
+
+    client.post(
+        "/documents",
+        files={"files": ("doc.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+    )
+
+    assert client.get("/documents").json() == []
+    assert stub_s3 == []
 
 
 def test_pdf_within_page_limit_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -192,7 +277,7 @@ def test_unsupported_extension_creates_no_document_record() -> None:
 
 # ---------------------------------------------------------------------------
 # AC-013: a multi-file upload yields one independent document record per
-# file.
+# file, each independently mutable.
 # ---------------------------------------------------------------------------
 
 
@@ -234,9 +319,61 @@ def test_one_invalid_file_in_a_batch_rejects_the_whole_batch() -> None:
     assert client.get("/documents").json() == []
 
 
+def test_deleting_one_document_from_a_batch_leaves_the_others_untouched() -> None:
+    """Proves each Document row in a multi-file upload is independently
+    mutable: deleting one by id does not affect the sibling rows created in
+    the same request."""
+    client = signed_up_client()
+
+    response = client.post(
+        "/documents",
+        files=[
+            ("files", ("a.txt", io.BytesIO(b"content a"), "text/plain")),
+            ("files", ("b.txt", io.BytesIO(b"content b"), "text/plain")),
+        ],
+    )
+    created = response.json()
+    first_id = created[0]["id"]
+
+    delete_response = client.delete(f"/documents/{first_id}")
+    assert delete_response.status_code == 204
+
+    remaining = client.get("/documents").json()
+    assert len(remaining) == 1
+    assert remaining[0]["id"] != first_id
+    assert remaining[0]["status"] == "queued"
+
+
+def test_retrying_one_document_from_a_batch_leaves_the_others_untouched() -> None:
+    """Proves per-row status mutation (retry resets status) does not leak
+    across sibling rows created in the same upload request."""
+    client = signed_up_client()
+
+    response = client.post(
+        "/documents",
+        files=[
+            ("files", ("a.txt", io.BytesIO(b"content a"), "text/plain")),
+            ("files", ("b.txt", io.BytesIO(b"content b"), "text/plain")),
+        ],
+    )
+    created = response.json()
+    first_id = created[0]["id"]
+    second_id = created[1]["id"]
+
+    retry_response = client.post(f"/documents/{first_id}/retry")
+    assert retry_response.status_code == 200
+    assert retry_response.json()["id"] == first_id
+    assert retry_response.json()["status"] == "queued"
+
+    listed = {doc["id"]: doc["status"] for doc in client.get("/documents").json()}
+    assert listed[first_id] == "queued"
+    assert listed[second_id] == "queued"
+    assert first_id != second_id
+
+
 # ---------------------------------------------------------------------------
 # AC-022: upload returns without running extraction/embedding -- the job is
-# enqueued to arq, not executed inside the request.
+# enqueued to arq, not executed inline.
 # ---------------------------------------------------------------------------
 
 
@@ -332,10 +469,35 @@ def test_second_account_cannot_retry_the_first_accounts_document() -> None:
     assert response.status_code == 404
 
 
+def test_second_account_gets_404_on_both_delete_and_retry_of_the_same_foreign_id() -> None:
+    """Both mutating routes are checked against the exact same foreign id,
+    not just against the resource type in general."""
+    owner = signed_up_client()
+    doc_id = owner.post("/documents", files={"files": txt_file()}).json()[0]["id"]
+
+    other = signed_up_client()
+    retry_response = other.post(f"/documents/{doc_id}/retry")
+    delete_response = other.delete(f"/documents/{doc_id}")
+
+    assert retry_response.status_code == 404
+    assert delete_response.status_code == 404
+    # Neither attempt mutated or removed the owner's row.
+    owner_docs = owner.get("/documents").json()
+    assert any(doc["id"] == doc_id for doc in owner_docs)
+
+
 def test_deleting_an_unknown_document_id_is_a_404_not_a_500() -> None:
     client = signed_up_client()
 
     response = client.delete("/documents/not-a-uuid")
+
+    assert response.status_code == 404
+
+
+def test_retrying_an_unknown_document_id_is_a_404_not_a_500() -> None:
+    client = signed_up_client()
+
+    response = client.post("/documents/not-a-uuid/retry")
 
     assert response.status_code == 404
 
@@ -348,6 +510,31 @@ def test_owner_can_delete_their_own_document() -> None:
 
     assert response.status_code == 204
     assert client.get("/documents").json() == []
+
+
+# ---------------------------------------------------------------------------
+# Auth guard: an unauthenticated caller cannot upload or list documents. The
+# api_spec declares `/documents` as cookie-authenticated; neither AC-010 nor
+# any of the pytest tests above previously exercised the unauthenticated
+# path, which is exactly the contract a client depends on before it ever
+# gets to try a real upload.
+# ---------------------------------------------------------------------------
+
+
+def test_upload_without_a_session_cookie_is_unauthorized() -> None:
+    client = new_client()
+
+    response = client.post("/documents", files={"files": txt_file()})
+
+    assert response.status_code == 401
+
+
+def test_listing_documents_without_a_session_cookie_is_unauthorized() -> None:
+    client = new_client()
+
+    response = client.get("/documents")
+
+    assert response.status_code == 401
 
 
 # ---------------------------------------------------------------------------
