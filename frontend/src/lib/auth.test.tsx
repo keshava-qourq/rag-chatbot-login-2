@@ -9,9 +9,11 @@ describe("auth client", () => {
   });
 
   it("signup posts to /auth/signup with credentials included", async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: "1", email: "a@b.com" }) });
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "1", email: "a@b.com" }),
+    });
     const user = await signup("a@b.com", "password123");
     expect(user).toEqual({ id: "1", email: "a@b.com" });
     expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -21,9 +23,11 @@ describe("auth client", () => {
   });
 
   it("login posts to /auth/login with credentials included", async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: "1", email: "a@b.com" }) });
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "1", email: "a@b.com" }),
+    });
     await login("a@b.com", "password123");
     expect(globalThis.fetch).toHaveBeenCalledWith(
       expect.stringContaining("/auth/login"),

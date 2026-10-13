@@ -68,9 +68,7 @@ describe("SignUp", () => {
     await user.click(screen.getByRole("button", { name: /create account/i }));
 
     await waitFor(() =>
-      expect(
-        screen.getAllByText("That email is already registered.").length,
-      ).toBeGreaterThan(0),
+      expect(screen.getAllByText("That email is already registered.").length).toBeGreaterThan(0),
     );
     expect(screen.queryByText("Documents screen")).not.toBeInTheDocument();
   });

@@ -406,7 +406,10 @@ export default function Screen() {
                         className="lg-rise mt-2 flex items-start gap-1.5 text-sm font-medium"
                         style={{ color: "#1A2433" }}
                       >
-                        <Icons.AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        <Icons.AlertCircle
+                          className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                          aria-hidden="true"
+                        />
                         <span>{fieldErrors.email}</span>
                       </p>
                     ) : null}
@@ -466,7 +469,10 @@ export default function Screen() {
                         className="lg-rise mt-2 flex items-start gap-1.5 text-sm font-medium"
                         style={{ color: "#1A2433" }}
                       >
-                        <Icons.AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        <Icons.AlertCircle
+                          className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                          aria-hidden="true"
+                        />
                         <span>{fieldErrors.password}</span>
                       </p>
                     ) : null}

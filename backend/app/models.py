@@ -68,7 +68,10 @@ class Session(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    token_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # Indexed: session resolution (the `get_current_user` FastAPI dependency
+    # in app.routers.auth) is a single lookup by this column on every
+    # authenticated request.
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     created_at: CreatedAt = created_at_column()
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

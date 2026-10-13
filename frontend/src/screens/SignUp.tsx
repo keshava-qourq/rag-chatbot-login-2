@@ -7,8 +7,17 @@ import { useNavigate } from "@/lib/navigate";
 import { signup, parseAuthError, useAuth } from "@/lib/auth";
 import { ApiError } from "@/lib/api";
 
-const { Button, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter, Label, Separator } =
-  UI;
+const {
+  Button,
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+  CardFooter,
+  Label,
+  Separator,
+} = UI;
 
 // `Input`/`Checkbox` in the shared kit are plain function components, not
 // `forwardRef`-wrapped ones, so the type they export does not list `ref` in

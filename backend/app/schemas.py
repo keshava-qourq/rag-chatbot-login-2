@@ -7,6 +7,8 @@ and anything generated from it -- already describes the real contract;
 the handlers behind them are still stubs.
 """
 
+from datetime import datetime
+
 from pydantic import BaseModel, EmailStr
 
 
@@ -31,6 +33,14 @@ class SignupRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+
+class UserResponse(BaseModel):
+    """What signup, login and /me return: never the password or its hash."""
+
+    id: str
+    email: EmailStr
+    created_at: datetime
 
 
 class RenameConversationRequest(BaseModel):
