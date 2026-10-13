@@ -27,6 +27,13 @@ from app.security import (
 
 router = APIRouter(tags=["auth"])
 
+# Module-level singletons so route signatures satisfy B008 (no function call
+# as an argument default) while still resolving per-request via FastAPI's
+# dependency injection.
+_DBDependency = Depends(get_db)
+_CurrentUserDependency = Depends(get_current_user)
+_SessionCookie = Cookie(default=None, alias=SESSION_COOKIE_NAME)
+
 # 14 days, matching app.security.SESSION_TTL.
 _COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 14
 
@@ -57,7 +64,7 @@ def _user_response(user: User) -> UserResponse:
     status_code=status.HTTP_201_CREATED,
 )
 async def signup(
-    payload: SignupRequest, response: Response, db: DBSession = Depends(get_db)
+    payload: SignupRequest, response: Response, db: DBSession = _DBDependency
 ) -> UserResponse:
     if not validate_password_strength(payload.password):
         raise HTTPException(
@@ -88,7 +95,7 @@ async def signup(
 
 @router.post("/auth/login", response_model=UserResponse)
 async def login(
-    payload: LoginRequest, response: Response, db: DBSession = Depends(get_db)
+    payload: LoginRequest, response: Response, db: DBSession = _DBDependency
 ) -> UserResponse:
     email = payload.email.lower()
     user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
@@ -115,8 +122,8 @@ async def login(
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
     response: Response,
-    session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
-    db: DBSession = Depends(get_db),
+    session: str | None = _SessionCookie,
+    db: DBSession = _DBDependency,
 ) -> Response:
     if session is not None:
         revoke_session(db, session)
@@ -125,5 +132,5 @@ async def logout(
 
 
 @router.get("/me", response_model=UserResponse)
-async def me(user: User = Depends(get_current_user)) -> UserResponse:
+async def me(user: User = _CurrentUserDependency) -> UserResponse:
     return _user_response(user)

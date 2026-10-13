@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import re
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import Cookie, Depends, HTTPException, status
 from passlib.context import CryptContext
@@ -36,6 +36,12 @@ PASSWORD_RULES = (
 
 # bcrypt, never a bare hashlib digest, for anything that is a password.
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Module-level singletons so `get_current_user`'s signature satisfies B008
+# (no function call as an argument default) while still resolving per-request
+# via FastAPI's dependency injection.
+_DBDependency = Depends(get_db)
+_SessionCookie = Cookie(default=None, alias=SESSION_COOKIE_NAME)
 
 
 def validate_password_strength(password: str) -> bool:
@@ -72,7 +78,7 @@ def create_session(db: DBSession, user: User) -> str:
     session = SessionModel(
         user_id=user.id,
         token_hash=_hash_token(token),
-        expires_at=datetime.now(timezone.utc) + SESSION_TTL,
+        expires_at=datetime.now(UTC) + SESSION_TTL,
     )
     db.add(session)
     db.commit()
@@ -82,7 +88,7 @@ def create_session(db: DBSession, user: User) -> str:
 def get_session_by_token(db: DBSession, token: str) -> SessionModel | None:
     """The single indexed lookup: active, unexpired session for this token."""
     token_hash = _hash_token(token)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     stmt = select(SessionModel).where(
         SessionModel.token_hash == token_hash,
         SessionModel.revoked_at.is_(None),
@@ -94,13 +100,13 @@ def get_session_by_token(db: DBSession, token: str) -> SessionModel | None:
 def revoke_session(db: DBSession, token: str) -> None:
     session = get_session_by_token(db, token)
     if session is not None:
-        session.revoked_at = datetime.now(timezone.utc)
+        session.revoked_at = datetime.now(UTC)
         db.commit()
 
 
 def get_current_user(
-    session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
-    db: DBSession = Depends(get_db),
+    session: str | None = _SessionCookie,
+    db: DBSession = _DBDependency,
 ) -> User:
     """FastAPI dependency: the signed-in user, or a 401 with no detail leak."""
     if session is None:
