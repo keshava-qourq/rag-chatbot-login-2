@@ -1,12 +1,13 @@
 """Conversation routes: list, create, load, rename, delete, ask.
 
-Every route except `POST /conversations/{id}/messages` is still a stub --
-list, create, load, rename and delete are a separate ticket's work. This
-file implements only the grounded-ask endpoint: retrieve the caller's own
-ready chunks, prompt Gemini with those chunks and the question only, stream
-the answer token-by-token over SSE, and persist the user message, the
-assistant message and its citations only once the stream has completed
-without error.
+List, create, load, rename and delete are plain CRUD over `Conversation`,
+`Message` and `Citation` rows, always filtered by the caller's `user_id` so
+a conversation id that belongs to another account is indistinguishable from
+one that does not exist (404 either way). `POST /conversations/{id}/messages`
+is the grounded-ask endpoint: retrieve the caller's own ready chunks, prompt
+Gemini with those chunks and the question only, stream the answer
+token-by-token over SSE, and persist the user message, the assistant message
+and its citations only once the stream has completed without error.
 
 The model is never called when there is nothing worth answering from: a
 caller with zero documents, or one whose relevant chunks (after the
@@ -32,13 +33,21 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session as DBSession
+from sqlalchemy.orm import selectinload
 
 from app.database import SessionLocal, get_db
 from app.gemini_client import GeminiProviderError, chat_stream, embed
 from app.ingestion import get_ready_chunks
 from app.models import Chunk, Citation, Conversation, Message, User
 from app.models import Document as DocumentModel
-from app.schemas import AskQuestionRequest, RenameConversationRequest, StubResponse
+from app.schemas import (
+    AskQuestionRequest,
+    CitationResponse,
+    ConversationDetailResponse,
+    ConversationResponse,
+    MessageResponse,
+    RenameConversationRequest,
+)
 from app.security import get_current_user
 
 router = APIRouter(tags=["conversations"])
@@ -105,26 +114,126 @@ _NOT_FOUND_ERROR_MESSAGE = "conversation not found"
 _AUTO_TITLE_MAX_CHARS = 60
 
 
-@router.get("/conversations", response_model=list[StubResponse])
-async def list_conversations() -> list[StubResponse]:
-    return []
+def _conversation_response(conversation: Conversation) -> ConversationResponse:
+    return ConversationResponse(
+        id=str(conversation.id),
+        title=conversation.title,
+        title_locked=conversation.title_locked,
+        created_at=conversation.created_at,
+        updated_at=conversation.updated_at,
+    )
 
 
-@router.post("/conversations", response_model=StubResponse)
-async def create_conversation() -> StubResponse:
-    return StubResponse(endpoint="POST /conversations")
+def _citation_response(citation: Citation) -> CitationResponse:
+    return CitationResponse(
+        id=str(citation.id),
+        document_id=str(citation.document_id),
+        page=citation.page,
+        quoted_passage=citation.quoted_passage,
+    )
 
 
-@router.get("/conversations/{conversation_id}", response_model=StubResponse)
-async def get_conversation(conversation_id: str) -> StubResponse:
-    return StubResponse(endpoint="GET /conversations/{id}")
+def _message_response(message: Message) -> MessageResponse:
+    citations = sorted(message.citations, key=lambda c: (c.page, str(c.id)))
+    return MessageResponse(
+        id=str(message.id),
+        role=message.role,
+        content=message.content,
+        created_at=message.created_at,
+        citations=[_citation_response(c) for c in citations],
+    )
 
 
-@router.patch("/conversations/{conversation_id}", response_model=StubResponse)
+def _get_owned_conversation(
+    db: DBSession, conversation_id: str, user_id: uuid.UUID
+) -> Conversation:
+    """The caller's own conversation, or a 404 -- never distinguishing a
+    missing id from one belonging to another account."""
+    try:
+        conv_uuid = uuid.UUID(conversation_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_ERROR_MESSAGE
+        ) from exc
+
+    conversation = db.execute(
+        select(Conversation).where(Conversation.id == conv_uuid, Conversation.user_id == user_id)
+    ).scalar_one_or_none()
+    if conversation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND_ERROR_MESSAGE)
+    return conversation
+
+
+@router.get("/conversations", response_model=list[ConversationResponse])
+async def list_conversations(
+    user: User = _CurrentUserDependency,
+    db: DBSession = _DBDependency,
+) -> list[ConversationResponse]:
+    conversations = (
+        db.execute(
+            select(Conversation)
+            .where(Conversation.user_id == user.id)
+            .order_by(Conversation.updated_at.desc())
+        )
+        .scalars()
+        .all()
+    )
+    return [_conversation_response(c) for c in conversations]
+
+
+@router.post(
+    "/conversations",
+    response_model=ConversationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_conversation(
+    user: User = _CurrentUserDependency,
+    db: DBSession = _DBDependency,
+) -> ConversationResponse:
+    conversation = Conversation(user_id=user.id, title="New chat", title_locked=False)
+    db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+    return _conversation_response(conversation)
+
+
+@router.get("/conversations/{conversation_id}", response_model=ConversationDetailResponse)
+async def get_conversation(
+    conversation_id: str,
+    user: User = _CurrentUserDependency,
+    db: DBSession = _DBDependency,
+) -> ConversationDetailResponse:
+    conversation = _get_owned_conversation(db, conversation_id, user.id)
+    messages = (
+        db.execute(
+            select(Message)
+            .options(selectinload(Message.citations))
+            .where(Message.conversation_id == conversation.id)
+            .order_by(Message.created_at.asc())
+        )
+        .scalars()
+        .all()
+    )
+    base = _conversation_response(conversation)
+    return ConversationDetailResponse(
+        **base.model_dump(),
+        messages=[_message_response(m) for m in messages],
+    )
+
+
+@router.patch("/conversations/{conversation_id}", response_model=ConversationResponse)
 async def rename_conversation(
-    conversation_id: str, payload: RenameConversationRequest
-) -> StubResponse:
-    return StubResponse(endpoint="PATCH /conversations/{id}")
+    conversation_id: str,
+    payload: RenameConversationRequest,
+    user: User = _CurrentUserDependency,
+    db: DBSession = _DBDependency,
+) -> ConversationResponse:
+    conversation = _get_owned_conversation(db, conversation_id, user.id)
+    conversation.title = payload.title
+    conversation.title_locked = True
+    db.commit()
+    db.refresh(conversation)
+    return _conversation_response(conversation)
 
 
 @router.delete(
@@ -132,7 +241,14 @@ async def rename_conversation(
     status_code=status.HTTP_204_NO_CONTENT,
     response_model=None,
 )
-async def delete_conversation(conversation_id: str) -> None:
+async def delete_conversation(
+    conversation_id: str,
+    user: User = _CurrentUserDependency,
+    db: DBSession = _DBDependency,
+) -> None:
+    conversation = _get_owned_conversation(db, conversation_id, user.id)
+    db.delete(conversation)
+    db.commit()
     return None
 
 
