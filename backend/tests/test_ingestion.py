@@ -112,9 +112,7 @@ def test_process_document_moves_plain_text_document_to_ready() -> None:
         assert refreshed.status == "ready"
         assert refreshed.failure_reason is None
 
-        chunks = (
-            session.query(Chunk).filter(Chunk.document_id == document.id).all()
-        )
+        chunks = session.query(Chunk).filter(Chunk.document_id == document.id).all()
         assert len(chunks) >= 1
         for chunk in chunks:
             assert chunk.document_id == document.id
@@ -392,7 +390,7 @@ def test_chunk_text_produces_overlapping_chunks() -> None:
     chunks = ingestion.chunk_text(text, chunk_size=1000, overlap=100)
     assert len(chunks) > 1
     # Confirm overlap: the tail of one chunk recurs at the head of the next.
-    for first, second in zip(chunks, chunks[1:]):
+    for first, second in zip(chunks, chunks[1:], strict=False):
         assert first[-50:] in text
         assert second[:50] in text
 
