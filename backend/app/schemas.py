@@ -49,3 +49,13 @@ class RenameConversationRequest(BaseModel):
 
 class AskQuestionRequest(BaseModel):
     question: str
+
+
+class DocumentResponse(BaseModel):
+    """What POST /documents and GET /documents return for a document."""
+
+    id: str
+    filename: str
+    created_at: datetime
+    size_bytes: int
+    status: str
