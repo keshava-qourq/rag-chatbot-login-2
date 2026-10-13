@@ -13,6 +13,7 @@ from app.gemini_client import (
     DEFAULT_EMBEDDING_MODEL,
     DEFAULT_MAX_RETRIES,
     DEFAULT_TIMEOUT_SECONDS,
+    EMBEDDING_OUTPUT_DIMENSIONALITY,
     GeminiConfigurationError,
     GeminiProviderError,
     RedactPayloadFilter,
@@ -23,6 +24,53 @@ from app.gemini_client import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+class _FakeEmbedding:
+    def __init__(self, values: list[float]) -> None:
+        self.values = values
+
+
+class _FakeEmbedResponse:
+    def __init__(self, vectors: list[list[float]]) -> None:
+        self.embeddings = [_FakeEmbedding(v) for v in vectors]
+
+
+class _FakeChatResponse:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class _FakeModels:
+    """Stands in for `genai.Client(...).models`."""
+
+    def __init__(self, embed_content=None, generate_content=None) -> None:
+        self._embed_content = embed_content
+        self._generate_content = generate_content
+        self.embed_calls: list[dict] = []
+        self.generate_calls: list[dict] = []
+
+    def embed_content(self, *, model, contents, config=None):
+        self.embed_calls.append({"model": model, "contents": contents, "config": config})
+        if self._embed_content is not None:
+            return self._embed_content(model=model, contents=contents, config=config)
+        return _FakeEmbedResponse([[0.1] * EMBEDDING_OUTPUT_DIMENSIONALITY])
+
+    def generate_content(self, *, model, contents):
+        self.generate_calls.append({"model": model, "contents": contents})
+        if self._generate_content is not None:
+            return self._generate_content(model=model, contents=contents)
+        return _FakeChatResponse("a reply")
+
+
+class _FakeClient:
+    def __init__(self, models: _FakeModels) -> None:
+        self.models = models
+
+
+def _patch_client(monkeypatch: pytest.MonkeyPatch, models: _FakeModels) -> None:
+    fake_client = _FakeClient(models)
+    monkeypatch.setattr(gemini_client, "_get_client", lambda config: fake_client)
 
 
 def test_missing_key_raises_named_configuration_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -48,6 +96,8 @@ def test_defaults_are_documented(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.chat_model == DEFAULT_CHAT_MODEL
     assert config.timeout_seconds == DEFAULT_TIMEOUT_SECONDS
     assert config.max_retries == DEFAULT_MAX_RETRIES
+    assert DEFAULT_EMBEDDING_MODEL == "gemini-embedding-001"
+    assert DEFAULT_CHAT_MODEL == "gemini-2.5-flash"
 
 
 def test_env_vars_override_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -93,8 +143,13 @@ def test_app_does_not_start_without_gemini_api_key(monkeypatch: pytest.MonkeyPat
 
 def test_redact_payload_filter_strips_sensitive_fields() -> None:
     record = logging.LogRecord(
-        name="app.gemini", level=logging.INFO, pathname=__file__, lineno=1,
-        msg="gemini call ok", args=(), exc_info=None,
+        name="app.gemini",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="gemini call ok",
+        args=(),
+        exc_info=None,
     )
     record.prompt = "the user's secret question"
     record.response_text = "the model's secret answer"
@@ -112,18 +167,10 @@ def test_logs_never_contain_request_or_response_text(
     secret_question = "what is the launch code"
     secret_answer = "the launch code is 42"
 
-    class _FakeResponse:
-        text = secret_answer
-
-    class _FakeModel:
-        def __init__(self, *_args, **_kwargs) -> None:
-            pass
-
-        def generate_content(self, _contents):
-            return _FakeResponse()
-
-    monkeypatch.setattr(gemini_client.genai, "configure", lambda **_kwargs: None)
-    monkeypatch.setattr(gemini_client.genai, "GenerativeModel", _FakeModel)
+    _patch_client(
+        monkeypatch,
+        _FakeModels(generate_content=lambda **_kwargs: _FakeChatResponse(secret_answer)),
+    )
 
     with caplog.at_level(logging.INFO, logger="app.gemini"):
         result = chat([{"role": "user", "content": secret_question}])
@@ -145,18 +192,14 @@ def test_chat_log_contains_model_name_and_latency_but_not_question(
 
     secret_question = "what is my bank balance"
 
-    class _FakeResponse:
-        text = "a redacted-from-the-question answer"
-
-    class _FakeModel:
-        def __init__(self, *_args, **_kwargs) -> None:
-            pass
-
-        def generate_content(self, _contents):
-            return _FakeResponse()
-
-    monkeypatch.setattr(gemini_client.genai, "configure", lambda **_kwargs: None)
-    monkeypatch.setattr(gemini_client.genai, "GenerativeModel", _FakeModel)
+    _patch_client(
+        monkeypatch,
+        _FakeModels(
+            generate_content=lambda **_kwargs: _FakeChatResponse(
+                "a redacted-from-the-question answer"
+            )
+        ),
+    )
 
     with caplog.at_level(logging.INFO, logger="app.gemini"):
         chat([{"role": "user", "content": secret_question}])
@@ -180,12 +223,7 @@ def test_embed_log_contains_model_name_and_latency_but_not_document_text(
 
     secret_document_text = "the confidential quarterly earnings are $42 million"
 
-    monkeypatch.setattr(gemini_client.genai, "configure", lambda **_kwargs: None)
-    monkeypatch.setattr(
-        gemini_client.genai,
-        "embed_content",
-        lambda model, content: {"embedding": [[0.1, 0.2]]},
-    )
+    _patch_client(monkeypatch, _FakeModels())
 
     with caplog.at_level(logging.INFO, logger="app.gemini"):
         embed([secret_document_text])
@@ -201,11 +239,11 @@ def test_embed_log_contains_model_name_and_latency_but_not_document_text(
 
 def test_embed_returns_vectors_for_batch_input(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GEMINI_API_KEY", "a-key")
-    monkeypatch.setattr(gemini_client.genai, "configure", lambda **_kwargs: None)
-    monkeypatch.setattr(
-        gemini_client.genai,
-        "embed_content",
-        lambda model, content: {"embedding": [[0.1, 0.2], [0.3, 0.4]]},
+    _patch_client(
+        monkeypatch,
+        _FakeModels(
+            embed_content=lambda **_kwargs: _FakeEmbedResponse([[0.1, 0.2], [0.3, 0.4]])
+        ),
     )
 
     result = embed(["first", "second"])
@@ -213,55 +251,52 @@ def test_embed_returns_vectors_for_batch_input(monkeypatch: pytest.MonkeyPatch) 
     assert result == [[0.1, 0.2], [0.3, 0.4]]
 
 
+def test_embed_returns_768_dimension_vectors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Retry note: every embedding must come back at 768 dimensions so it
+    matches the `chunks.embedding vector(768)` column, and the
+    `output_dimensionality` request must actually be sent to the model."""
+    monkeypatch.setenv("GEMINI_API_KEY", "a-key")
+    models = _FakeModels()
+    _patch_client(monkeypatch, models)
+
+    result = embed(["some document text"])
+
+    assert len(result) == 1
+    assert len(result[0]) == EMBEDDING_OUTPUT_DIMENSIONALITY
+
+    assert models.embed_calls[0]["config"].output_dimensionality == EMBEDDING_OUTPUT_DIMENSIONALITY
+
+
 def test_embed_calls_the_configured_embedding_model(monkeypatch: pytest.MonkeyPatch) -> None:
     """AC-062: `embed()` passes the configured embedding model name to the
     stubbed client, not a hardcoded or default-only value."""
     monkeypatch.setenv("GEMINI_API_KEY", "a-key")
     monkeypatch.setenv("GEMINI_EMBEDDING_MODEL", "models/a-specific-embed-model")
-    monkeypatch.setattr(gemini_client.genai, "configure", lambda **_kwargs: None)
 
-    seen = {}
-
-    def _stub_embed_content(model, content):
-        seen["model"] = model
-        seen["content"] = content
-        return {"embedding": [[0.5, 0.6]]}
-
-    monkeypatch.setattr(gemini_client.genai, "embed_content", _stub_embed_content)
+    models = _FakeModels()
+    _patch_client(monkeypatch, models)
 
     embed(["some document text"])
 
-    assert seen["model"] == "models/a-specific-embed-model"
+    assert models.embed_calls[0]["model"] == "models/a-specific-embed-model"
 
 
 def test_chat_calls_the_configured_chat_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    """AC-062: `chat()` constructs the Gemini client with the configured chat
+    """AC-062: `chat()` calls the Gemini client with the configured chat
     model name, not a hardcoded or default-only value."""
     monkeypatch.setenv("GEMINI_API_KEY", "a-key")
     monkeypatch.setenv("GEMINI_CHAT_MODEL", "models/a-specific-chat-model")
 
-    seen = {}
-
-    class _FakeResponse:
-        text = "an answer"
-
-    class _FakeModel:
-        def __init__(self, model_name, *_args, **_kwargs) -> None:
-            seen["model"] = model_name
-
-        def generate_content(self, _contents):
-            return _FakeResponse()
-
-    monkeypatch.setattr(gemini_client.genai, "configure", lambda **_kwargs: None)
-    monkeypatch.setattr(gemini_client.genai, "GenerativeModel", _FakeModel)
+    models = _FakeModels()
+    _patch_client(monkeypatch, models)
 
     chat([{"role": "user", "content": "a question"}])
 
-    assert seen["model"] == "models/a-specific-chat-model"
+    assert models.generate_calls[0]["model"] == "models/a-specific-chat-model"
 
 
 def test_no_other_model_provider_sdk_is_in_the_dependency_set() -> None:
-    """AC-062: `google-generativeai` is the only model-provider SDK this
+    """AC-062: Google's Gemini SDK is the only model-provider SDK this
     codebase depends on. A second provider SDK slipping into
     requirements.txt, or being importable in this environment, would mean
     the "Gemini-only" contract is no longer actually enforced by what gets
@@ -313,15 +348,14 @@ def test_embed_retries_then_raises_typed_error_on_persistent_failure(
     monkeypatch.setenv("GEMINI_API_KEY", "a-key")
     monkeypatch.setenv("GEMINI_MAX_RETRIES", "2")
     monkeypatch.setattr(gemini_client.time, "sleep", lambda _seconds: None)
-    monkeypatch.setattr(gemini_client.genai, "configure", lambda **_kwargs: None)
 
     attempts = {"count": 0}
 
-    def _always_fails(model, content):
+    def _always_fails(**_kwargs):
         attempts["count"] += 1
         raise ConnectionError("provider unreachable")
 
-    monkeypatch.setattr(gemini_client.genai, "embed_content", _always_fails)
+    _patch_client(monkeypatch, _FakeModels(embed_content=_always_fails))
 
     with pytest.raises(GeminiProviderError):
         embed(["hello"])
@@ -333,15 +367,14 @@ def test_slow_call_times_out_as_typed_error(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("GEMINI_API_KEY", "a-key")
     monkeypatch.setenv("GEMINI_MAX_RETRIES", "1")
     monkeypatch.setenv("GEMINI_TIMEOUT_SECONDS", "0.05")
-    monkeypatch.setattr(gemini_client.genai, "configure", lambda **_kwargs: None)
 
-    def _hangs(model, content):
+    def _hangs(**_kwargs):
         import time as _time
 
         _time.sleep(1)
-        return {"embedding": [0.1, 0.2]}
+        return _FakeEmbedResponse([[0.1, 0.2]])
 
-    monkeypatch.setattr(gemini_client.genai, "embed_content", _hangs)
+    _patch_client(monkeypatch, _FakeModels(embed_content=_hangs))
 
     with pytest.raises(GeminiProviderError):
         embed(["hello"])

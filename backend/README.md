@@ -25,8 +25,8 @@ key is rotated.
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `GEMINI_API_KEY` | yes | -- | The paid-tier Gemini API key described above. Startup raises `GeminiConfigurationError` and the app does not serve requests without it. |
-| `GEMINI_EMBEDDING_MODEL` | no | `models/text-embedding-004` | Gemini embedding model used by `app.gemini_client.embed`. |
-| `GEMINI_CHAT_MODEL` | no | `models/gemini-1.5-flash` | Gemini chat model used by `app.gemini_client.chat`. |
+| `GEMINI_EMBEDDING_MODEL` | no | `gemini-embedding-001` | Gemini embedding model used by `app.gemini_client.embed`. Every call requests `output_dimensionality=768` to match the `chunks.embedding vector(768)` column. |
+| `GEMINI_CHAT_MODEL` | no | `gemini-2.5-flash` | Gemini chat model used by `app.gemini_client.chat`. |
 | `GEMINI_TIMEOUT_SECONDS` | no | `30` | Per-call time budget; a call exceeding this raises `GeminiProviderError` instead of hanging. |
 | `GEMINI_MAX_RETRIES` | no | `3` | Attempts made before a failing call raises `GeminiProviderError`. |
 
@@ -44,6 +44,6 @@ defence. See `backend/tests/test_gemini.py` for the coverage.
 
 ### Single provider
 
-`google-generativeai` is the only model-provider SDK this codebase imports
-or lists in `requirements.txt`. Do not add a second provider without a new
+`google-genai` is the only model-provider SDK this codebase imports or
+lists in `requirements.txt`. Do not add a second provider without a new
 ticket.

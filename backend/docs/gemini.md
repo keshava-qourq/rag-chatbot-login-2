@@ -2,8 +2,8 @@
 
 The approved architecture names Google Gemini as the sole model provider for
 both embeddings and chat completions. `app/gemini_client.py` is the only
-module that imports the `google-generativeai` SDK; no other provider SDK is
-added to `requirements.txt`, and nothing else in this codebase should reach a
+module that imports the `google-genai` SDK; no other provider SDK is added
+to `requirements.txt`, and nothing else in this codebase should reach a
 model API directly.
 
 ## Required credential
@@ -33,8 +33,8 @@ does not expose a machine-checkable "training excluded" flag.
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `GEMINI_API_KEY` | yes | none -- the app refuses to start without it | The paid-tier credential described above. |
-| `GEMINI_EMBEDDING_MODEL` | no | `models/text-embedding-004` | Model used by `gemini_client.embed`. |
-| `GEMINI_CHAT_MODEL` | no | `models/gemini-1.5-flash` | Model used by `gemini_client.chat`. |
+| `GEMINI_EMBEDDING_MODEL` | no | `gemini-embedding-001` | Model used by `gemini_client.embed`. Every call requests `output_dimensionality=768` so the result matches the `chunks.embedding vector(768)` column regardless of the model's native size. |
+| `GEMINI_CHAT_MODEL` | no | `gemini-2.5-flash` | Model used by `gemini_client.chat`. |
 | `GEMINI_MAX_RETRIES` | no | `3` | Attempts before a provider outage surfaces as `GeminiProviderError` instead of hanging. |
 | `GEMINI_TIMEOUT_SECONDS` | no | `30` | Per-attempt hard timeout enforced around every Gemini call. |
 

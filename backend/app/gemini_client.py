@@ -2,7 +2,7 @@
 
 The approved architecture names exactly one model provider. Every embedding
 or chat call in this codebase goes through `embed` and `chat` here -- this is
-the only module that imports `google.generativeai`, so there is exactly one
+the only module that imports the `google-genai` SDK, so there is exactly one
 place that enforces the required configuration, retries a flaky call behind
 a hard timeout, and redacts what reaches the logs.
 """
@@ -17,7 +17,8 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 GEMINI_API_KEY_VAR = "GEMINI_API_KEY"
 
@@ -25,10 +26,15 @@ GEMINI_API_KEY_VAR = "GEMINI_API_KEY"
 # chat models, read fresh from the environment on every call so a change to
 # the environment (or a test's monkeypatch) takes effect without reimporting
 # this module.
-DEFAULT_EMBEDDING_MODEL = "models/text-embedding-004"
-DEFAULT_CHAT_MODEL = "models/gemini-1.5-flash"
+DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
+DEFAULT_CHAT_MODEL = "gemini-2.5-flash"
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_TIMEOUT_SECONDS = 30.0
+
+# `chunks.embedding` is a pgvector `vector(768)` column (see app.models), so
+# every embedding this module returns is requested at exactly this
+# dimensionality regardless of the embedding model's native output size.
+EMBEDDING_OUTPUT_DIMENSIONALITY = 768
 
 # A single shared pool backs the hard per-call timeout below. Not a context
 # manager: shutting it down would block waiting for a hung call to finish,
@@ -157,14 +163,21 @@ def _log_call(event: str, level: int, **fields: object) -> None:
     logger.log(level, event, extra=extra)
 
 
-_configured_key: str | None = None
+_client: genai.Client | None = None
+_client_key: str | None = None
 
 
-def _ensure_configured(config: GeminiConfig) -> None:
-    global _configured_key
-    if _configured_key != config.api_key:
-        genai.configure(api_key=config.api_key)
-        _configured_key = config.api_key
+def _get_client(config: GeminiConfig) -> genai.Client:
+    """The shared `genai.Client`, rebuilt only when the api key changes.
+
+    A thin seam tests patch directly, so test doubles never have to impersonate
+    the real `google-genai` SDK's constructor or transport.
+    """
+    global _client, _client_key
+    if _client is None or _client_key != config.api_key:
+        _client = genai.Client(api_key=config.api_key)
+        _client_key = config.api_key
+    return _client
 
 
 def _call_with_timeout(fn, timeout: float, *args, **kwargs):
@@ -183,9 +196,13 @@ def _call_with_timeout(fn, timeout: float, *args, **kwargs):
 
 
 def embed(texts: Sequence[str], *, correlation_id: str | None = None) -> list[list[float]]:
-    """Embed one or more texts with the configured Gemini embedding model."""
+    """Embed one or more texts with the configured Gemini embedding model.
+
+    Every embedding is requested at `EMBEDDING_OUTPUT_DIMENSIONALITY` (768)
+    so the result always matches the `chunks.embedding vector(768)` column.
+    """
     config = get_config()
-    _ensure_configured(config)
+    client = _get_client(config)
     correlation_id = correlation_id or str(uuid.uuid4())
     texts = list(texts)
 
@@ -194,17 +211,16 @@ def embed(texts: Sequence[str], *, correlation_id: str | None = None) -> list[li
         start = time.monotonic()
         try:
             response = _call_with_timeout(
-                genai.embed_content,
+                client.models.embed_content,
                 config.timeout_seconds,
                 model=config.embedding_model,
-                content=texts,
+                contents=texts,
+                config=types.EmbedContentConfig(
+                    output_dimensionality=EMBEDDING_OUTPUT_DIMENSIONALITY
+                ),
             )
             latency_ms = (time.monotonic() - start) * 1000
-            embeddings = response["embedding"]
-            if texts and embeddings and isinstance(embeddings[0], (int, float)):
-                # The SDK returns a flat vector for a single text, and a list
-                # of vectors for a batch; normalise to always return a batch.
-                embeddings = [embeddings]
+            embeddings = [list(embedding.values) for embedding in response.embeddings]
             _log_call(
                 "gemini embed call",
                 logging.INFO,
@@ -214,7 +230,7 @@ def embed(texts: Sequence[str], *, correlation_id: str | None = None) -> list[li
                 input_size=len(texts),
                 latency_ms=round(latency_ms, 2),
             )
-            return list(embeddings)
+            return embeddings
         except Exception as exc:  # noqa: BLE001 -- normalised to GeminiProviderError below
             last_error = exc
             latency_ms = (time.monotonic() - start) * 1000
@@ -246,19 +262,21 @@ def chat(
     oldest first, matching the shape `models.Message` already stores.
     """
     config = get_config()
-    _ensure_configured(config)
+    client = _get_client(config)
     correlation_id = correlation_id or str(uuid.uuid4())
-    contents = [{"role": m["role"], "parts": [m["content"]]} for m in messages]
+    contents = [
+        types.Content(role=m["role"], parts=[types.Part(text=m["content"])]) for m in messages
+    ]
 
     last_error: Exception | None = None
     for attempt in range(1, config.max_retries + 1):
         start = time.monotonic()
         try:
-            model = genai.GenerativeModel(config.chat_model)
             response = _call_with_timeout(
-                model.generate_content,
+                client.models.generate_content,
                 config.timeout_seconds,
-                contents,
+                model=config.chat_model,
+                contents=contents,
             )
             latency_ms = (time.monotonic() - start) * 1000
             text = response.text or ""
@@ -299,6 +317,7 @@ __all__ = [
     "DEFAULT_CHAT_MODEL",
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_TIMEOUT_SECONDS",
+    "EMBEDDING_OUTPUT_DIMENSIONALITY",
     "GeminiConfig",
     "GeminiConfigurationError",
     "GeminiProviderError",
