@@ -269,12 +269,28 @@ def _load_and_mark_processing(session: DBSession, document_id: str) -> Document 
     return document
 
 
+def _root_message(exc: Exception) -> str:
+    """The message of the innermost exception `exc` was raised from.
+
+    Every wrapping raise in this module uses `raise ... from exc`, so the
+    immediate `__cause__` is the original failure's own message -- the
+    detail worth surfacing (briefly) to the user, as distinct from this
+    module's own "failed to ..." wrapping text around it.
+    """
+    cause = exc.__cause__
+    return str(cause) if cause is not None else str(exc)
+
+
 def _classify_failure(exc: Exception) -> str:
     """A short, plain-language message for `Document.failure_reason`.
 
     Maps the internal `IngestionError` messages raised throughout this
     module (and the generic errors they wrap) onto one of a small, stable
     set of user-facing strings -- never the raw exception text (AC-024).
+    For a storage failure, a short detail (only the text before the first
+    colon in the original error's own message, so any further detail --
+    connection internals, stack-like text -- never leaks) is appended in
+    parentheses.
     """
     message = str(exc).lower()
 
@@ -290,6 +306,9 @@ def _classify_failure(exc: Exception) -> str:
     if "failed to embed" in message or "embedding returned" in message:
         return _PROVIDER_UNAVAILABLE_MESSAGE
     if "failed to fetch" in message or "s3_bucket is not configured" in message:
+        detail = _root_message(exc).split(":", 1)[0].strip()
+        if detail:
+            return f"{_STORAGE_UNAVAILABLE_MESSAGE} ({detail})"
         return _STORAGE_UNAVAILABLE_MESSAGE
     return _GENERIC_MESSAGE
 
@@ -310,7 +329,11 @@ def _mark_failed(session: DBSession, document_id: str, exc: Exception) -> None:
 
 
 def _ingest(session: DBSession, document: Document) -> None:
-    data = _fetch_from_s3(document.s3_key)
+    try:
+        data = _fetch_from_s3(document.s3_key)
+    except Exception as exc:
+        raise IngestionError(f"failed to fetch document from storage: {exc}") from exc
+
     chunk_rows = _build_chunks(document, document.mime_type, data)
 
     # Chunk writes are committed on their own, separately from the status
