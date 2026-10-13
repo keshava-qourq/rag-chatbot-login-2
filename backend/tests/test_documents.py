@@ -5,7 +5,9 @@ S3 storage (`_store_in_s3`) is stubbed for every test in this module so no
 real S3/boto3 call is ever made. The arq job queue needs no separate stub:
 `REDIS_URL` is unset in this test configuration, so
 `app.worker._redis_settings()` returns `None` and `_enqueue_ingestion`
-becomes a documented no-op.
+becomes a documented no-op. One test below opts into a configured
+`REDIS_URL` with a fake arq pool, specifically to prove the ingestion job is
+enqueued rather than executed inline.
 """
 
 import io
@@ -230,6 +232,68 @@ def test_one_invalid_file_in_a_batch_rejects_the_whole_batch() -> None:
 
     assert response.status_code == 422
     assert client.get("/documents").json() == []
+
+
+# ---------------------------------------------------------------------------
+# AC-022: upload returns without running extraction/embedding -- the job is
+# enqueued to arq, not executed inside the request.
+# ---------------------------------------------------------------------------
+
+
+def test_upload_enqueues_the_ingestion_job_without_executing_it_inline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+
+    enqueued: list[tuple[str, tuple]] = []
+
+    class FakePool:
+        async def enqueue_job(self, name: str, *args: object) -> None:
+            enqueued.append((name, args))
+
+        async def close(self) -> None:
+            pass
+
+    async def fake_create_pool(settings: object) -> FakePool:
+        return FakePool()
+
+    import arq.connections as arq_connections
+
+    monkeypatch.setattr(arq_connections, "create_pool", fake_create_pool)
+
+    import app.ingestion as ingestion_module
+
+    embed_calls: list[object] = []
+    monkeypatch.setattr(
+        ingestion_module,
+        "embed",
+        lambda *args, **kwargs: embed_calls.append((args, kwargs)) or [],
+    )
+    process_document_calls: list[object] = []
+    original_process_document = ingestion_module.process_document
+
+    async def spying_process_document(ctx: dict, document_id: str) -> None:
+        process_document_calls.append(document_id)
+        await original_process_document(ctx, document_id)
+
+    monkeypatch.setattr(ingestion_module, "process_document", spying_process_document)
+
+    client = signed_up_client()
+    response = client.post("/documents", files={"files": txt_file()})
+
+    assert response.status_code == 201
+    document_id = response.json()[0]["id"]
+
+    # The job was handed to arq's pool...
+    assert len(enqueued) == 1
+    job_name, args = enqueued[0]
+    assert job_name == documents_module.INGESTION_JOB_NAME
+    assert args == (document_id,)
+
+    # ...but never actually run inside the request: no extraction/embedding
+    # call happened, and the worker's own job function was never invoked.
+    assert embed_calls == []
+    assert process_document_calls == []
 
 
 # ---------------------------------------------------------------------------

@@ -1,15 +1,23 @@
 """Entry point for the ingestion worker (same codebase, separate process).
 
 Run as `arq app.worker.WorkerSettings`. It pulls jobs from the same Redis the
-API enqueues to, so the two must agree on `REDIS_URL`. No job functions are
-registered yet -- extraction, chunking, embedding and status reporting are
-the ingestion ticket's work; this module is the base the jobs attach to.
+API enqueues to, so the two must agree on `REDIS_URL`. `process_document`
+(`app.ingestion`) is the one job registered here, under the exact name
+`app.routers.documents.INGESTION_JOB_NAME` so the enqueue call in
+`app.routers.documents._enqueue_ingestion` resolves to it.
+
+This module deliberately does not import `app.routers.documents` at module
+level: that module imports `_redis_settings` from here, and importing it
+back would be a circular import. `tests/test_ingestion.py` is what asserts
+the two names actually agree.
 """
 
 import os
 from urllib.parse import urlparse
 
 from arq.connections import RedisSettings
+
+from app.ingestion import process_document
 
 
 def _redis_settings() -> RedisSettings | None:
@@ -36,5 +44,5 @@ def _redis_settings() -> RedisSettings | None:
 class WorkerSettings:
     """arq's entry point: `arq app.worker.WorkerSettings`."""
 
-    functions: list = []
+    functions: list = [process_document]
     redis_settings = _redis_settings()
