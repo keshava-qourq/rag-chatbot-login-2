@@ -241,9 +241,7 @@ def test_embed_returns_vectors_for_batch_input(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("GEMINI_API_KEY", "a-key")
     _patch_client(
         monkeypatch,
-        _FakeModels(
-            embed_content=lambda **_kwargs: _FakeEmbedResponse([[0.1, 0.2], [0.3, 0.4]])
-        ),
+        _FakeModels(embed_content=lambda **_kwargs: _FakeEmbedResponse([[0.1, 0.2], [0.3, 0.4]])),
     )
 
     result = embed(["first", "second"])
