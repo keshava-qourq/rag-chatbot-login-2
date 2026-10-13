@@ -81,9 +81,7 @@ describe("Chat screen", () => {
       title: "Lease questions",
       created_at: "",
       updated_at: "",
-      messages: [
-        { id: "m1", role: "user", content: "When does the lease end?", created_at: "" },
-      ],
+      messages: [{ id: "m1", role: "user", content: "When does the lease end?", created_at: "" }],
     });
 
     renderChat();
@@ -120,9 +118,7 @@ describe("Chat screen", () => {
       { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
     ]);
     vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([]);
-    const deleteSpy = vi
-      .spyOn(conversationsApi, "deleteConversation")
-      .mockResolvedValue(undefined);
+    const deleteSpy = vi.spyOn(conversationsApi, "deleteConversation").mockResolvedValue(undefined);
 
     renderChat();
     await screen.findByText("Lease questions");
