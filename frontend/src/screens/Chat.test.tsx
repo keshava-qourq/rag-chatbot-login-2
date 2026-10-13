@@ -1,6 +1,7 @@
 import { act } from "react";
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as conversationsApi from "@/lib/conversations";
@@ -9,7 +10,14 @@ import * as documentsApi from "@/lib/documents";
 import Chat from "./Chat";
 
 function renderChat() {
-  return render(<Chat />);
+  return render(
+    <MemoryRouter initialEntries={["/chat"]}>
+      <Routes>
+        <Route path="/chat" element={<Chat />} />
+        <Route path="/documents" element={<div>Document library screen</div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
 }
 
 afterEach(() => {
@@ -64,7 +72,7 @@ describe("Chat screen", () => {
 
   it("shows an empty state with no conversations", async () => {
     vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([]);
-    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
 
     renderChat();
 
@@ -79,6 +87,7 @@ describe("Chat screen", () => {
     vi.spyOn(conversationsApi, "getConversation").mockResolvedValue({
       id: "c1",
       title: "Lease questions",
+      title_locked: false,
       created_at: "",
       updated_at: "",
       messages: [{ id: "m1", role: "user", content: "When does the lease end?", created_at: "" }],
@@ -90,11 +99,55 @@ describe("Chat screen", () => {
     expect(await screen.findByText("When does the lease end?")).toBeInTheDocument();
   });
 
+  it("AC-038: after reload, GET /conversations/{id} shows the same answer with an expandable citation", async () => {
+    vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
+      { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
+    ]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+    vi.spyOn(conversationsApi, "getConversation").mockResolvedValue({
+      id: "c1",
+      title: "Lease questions",
+      title_locked: false,
+      created_at: "",
+      updated_at: "",
+      messages: [
+        {
+          id: "m1",
+          role: "user",
+          content: "When can we break the lease?",
+          created_at: "",
+        },
+        {
+          id: "m2",
+          role: "assistant",
+          content: "Six months notice [[1]]",
+          created_at: "",
+          citations: [
+            { id: "cit-1", document_id: "r0", page: 14, quoted_passage: "Six months' prior notice." },
+          ],
+        },
+      ],
+    });
+
+    renderChat();
+    fireEvent.click(await screen.findByText("Lease questions"));
+
+    expect(await screen.findByText("When can we break the lease?")).toBeInTheDocument();
+    expect(screen.getByText(/six months notice/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /citation 1/i }));
+    expect(await screen.findByText(/six months' prior notice/i)).toBeInTheDocument();
+    expect(screen.getByText(/ready-0\.pdf/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /citation 1/i }));
+    expect(screen.queryByText(/six months' prior notice/i)).not.toBeInTheDocument();
+  });
+
   it("renames a conversation via PATCH /conversations/{id}", async () => {
     vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
       { id: "c1", title: "Old title", created_at: "", updated_at: "" },
     ]);
-    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
     const renameSpy = vi.spyOn(conversationsApi, "renameConversation").mockResolvedValue({
       id: "c1",
       title: "New title",
@@ -117,8 +170,10 @@ describe("Chat screen", () => {
     vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
       { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
     ]);
-    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([]);
-    const deleteSpy = vi.spyOn(conversationsApi, "deleteConversation").mockResolvedValue(undefined);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+    const deleteSpy = vi
+      .spyOn(conversationsApi, "deleteConversation")
+      .mockResolvedValue(undefined);
 
     renderChat();
     await screen.findByText("Lease questions");
@@ -136,6 +191,7 @@ describe("Chat screen", () => {
     vi.spyOn(conversationsApi, "getConversation").mockResolvedValue({
       id: "c1",
       title: "Lease questions",
+      title_locked: false,
       created_at: "",
       updated_at: "",
       messages: [],
@@ -171,14 +227,79 @@ describe("Chat screen", () => {
         content: "Six months notice [[1]]",
         created_at: "",
         citations: [
-          { n: 1, document: "Lease.pdf", page: 14, quoted_passage: "Six months' prior notice." },
+          { id: "cit-1", document_id: "r0", page: 14, quoted_passage: "Six months' prior notice." },
         ],
       });
     });
 
     expect(await screen.findByText("When can we break the lease?")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Citation 1" }));
+    fireEvent.click(screen.getByRole("button", { name: /citation 1/i }));
     expect(await screen.findByText(/six months' prior notice/i)).toBeInTheDocument();
+    expect(screen.getByText(/ready-0\.pdf/)).toBeInTheDocument();
+  });
+
+  it("AC-031/032: a 'not in your documents' answer renders as a normal message with no citation chips or retry banner", async () => {
+    vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
+      { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
+    ]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+    vi.spyOn(conversationsApi, "getConversation").mockResolvedValue({
+      id: "c1",
+      title: "Lease questions",
+      title_locked: false,
+      created_at: "",
+      updated_at: "",
+      messages: [],
+    });
+
+    let handlers: conversationsApi.AskQuestionHandlers | undefined;
+    vi.spyOn(conversationsApi, "askQuestion").mockImplementation((_id, _q, h) => {
+      handlers = h;
+      return () => {};
+    });
+
+    renderChat();
+    fireEvent.click(await screen.findByText("Lease questions"));
+    await screen.findByText(/ask a question about your documents/i);
+
+    const textarea = screen.getByLabelText(/ask a question/i);
+    fireEvent.change(textarea, { target: { value: "What is the capital of France?" } });
+    fireEvent.click(screen.getByRole("button", { name: "" }));
+
+    await waitFor(() => expect(handlers).toBeDefined());
+
+    act(() => {
+      handlers!.onToken("I don't see an answer to that in your documents.");
+      handlers!.onDone({
+        id: "m-final",
+        role: "assistant",
+        content: "I don't see an answer to that in your documents.",
+        created_at: "",
+        citations: [],
+      });
+    });
+
+    expect(
+      await screen.findByText(/i don.t see an answer to that in your documents/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /citation/i })).not.toBeInTheDocument();
+  });
+
+  it("AC-033: a user with zero documents sees the nothing-to-search prompt and a disabled, explained composer", async () => {
+    vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([]);
+
+    renderChat();
+
+    expect(await screen.findByText(/nothing to search yet/i)).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /upload a document/i });
+    expect(link).toHaveAttribute("href", "/documents");
+
+    expect(
+      await screen.findByText(/upload a document before you can ask a question/i),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/ask a question/i)).toBeDisabled();
   });
 
   it("AC-030: when there are no ready documents, the composer shows the processing message instead of allowing a question", async () => {
@@ -195,7 +316,7 @@ describe("Chat screen", () => {
     expect(screen.getByLabelText(/ask a question/i)).toBeDisabled();
   });
 
-  it("shows the retry affordance on a provider error and leaves no persisted assistant message", async () => {
+  it("AC-039: a mid-stream error event replaces the partial answer with a clear error and a Retry that resubmits the same question", async () => {
     vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
       { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
     ]);
@@ -203,13 +324,14 @@ describe("Chat screen", () => {
     vi.spyOn(conversationsApi, "getConversation").mockResolvedValue({
       id: "c1",
       title: "Lease questions",
+      title_locked: false,
       created_at: "",
       updated_at: "",
       messages: [],
     });
 
     let handlers: conversationsApi.AskQuestionHandlers | undefined;
-    vi.spyOn(conversationsApi, "askQuestion").mockImplementation((_id, _q, h) => {
+    const askSpy = vi.spyOn(conversationsApi, "askQuestion").mockImplementation((_id, _q, h) => {
       handlers = h;
       return () => {};
     });
@@ -232,5 +354,9 @@ describe("Chat screen", () => {
     expect(await screen.findByText("The provider failed. Please try again.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
     expect(screen.queryByText(/partial answer/i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+    await waitFor(() => expect(askSpy).toHaveBeenCalledTimes(2));
+    expect(askSpy.mock.calls[1][1]).toBe("What happened?");
   });
 });

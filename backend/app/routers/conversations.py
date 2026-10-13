@@ -7,14 +7,26 @@ ready chunks, prompt Gemini with those chunks and the question only, stream
 the answer token-by-token over SSE, and persist the user message, the
 assistant message and its citations only once the stream has completed
 without error.
+
+The model is never called when there is nothing worth answering from: a
+caller with zero documents, or one whose relevant chunks (after the
+similarity threshold) come back empty, gets a fixed, distinct refusal
+message instead -- no chat completion, no risk of a free, outside-knowledge
+answer slipping through (AC-031, AC-032, AC-033).
+
+Citations are derived strictly from the `[[n]]` markers the model actually
+emitted, resolved only against the excerpts it was actually given: any `n`
+outside that range is dropped before it is streamed or persisted (AC-036).
 """
 
 from __future__ import annotations
 
 import json
 import math
+import re
 import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -40,25 +52,43 @@ _CurrentUserDependency = Depends(get_current_user)
 # How many of the caller's own chunks are offered to the model, and how
 # similar (cosine) a chunk must be to the question before it is offered at
 # all -- a chunk below this bar is simply irrelevant, which is what lets
-# AC-028's "no relevant chunks" case occur even for a user with ready
+# AC-031's "no relevant chunks" case occur even for a user with ready
 # documents.
 TOP_K_CHUNKS = 6
 SIMILARITY_THRESHOLD = 0.2
 
-# AC-028: the model must answer solely from the supplied excerpts, cite
-# them, and say so -- rather than fall back on outside knowledge -- when the
-# excerpts do not contain the answer.
+# How much of a cited chunk's own text is quoted back in a citation -- a
+# fixed, deterministic cap so the same chunk always produces the same
+# `quoted_passage` (AC-035).
+MAX_QUOTED_PASSAGE_CHARS = 500
+
+# AC-034: the model is told to mark its sources with this exact bracket form
+# so markers in the streamed answer can be told apart from ordinary text
+# (a stray "[3]" the model writes as prose is not a citation).
+_CITATION_MARKER_RE = re.compile(r"\[\[(\d+)\]\]")
+
 SYSTEM_PROMPT = (
     "You are a document question-answering assistant. Answer the user's "
     "question using ONLY the information in the numbered excerpts below. "
-    "Cite the excerpt(s) you used inline as [n], where n is the excerpt "
-    "number. Never use outside knowledge, and never guess or supplement a "
-    "partial answer with anything you already know. If the excerpts do not "
-    "contain the answer, reply exactly: "
-    '"I don\'t see an answer to that in your documents." and cite nothing.'
+    "Cite the excerpt(s) you used inline with a double-bracket marker in "
+    "the exact form [[n]], where n is the excerpt number -- place one "
+    "immediately after every statement it supports. Never use outside "
+    "knowledge, and never guess or supplement a partial answer with "
+    "anything you already know. If the excerpts do not actually answer the "
+    "question, reply exactly: "
+    '"I could not find the answer in your documents." and cite nothing.'
 )
 
-NO_EXCERPTS_PLACEHOLDER = "(no excerpts were found relevant to this question)"
+# AC-031/AC-032: shown instead of calling the model at all when the caller's
+# question has no chunk scoring above `SIMILARITY_THRESHOLD` -- whether
+# because the documents genuinely do not cover it, or because the question
+# is a general-knowledge one no owned chunk addresses. Fixed and exact, so
+# it is never confused with a free-form, partially-correct model answer.
+REFUSAL_MESSAGE = "I could not find the answer in your documents."
+
+# AC-033: a user with no documents at all gets this instead -- distinct from
+# `REFUSAL_MESSAGE`, which implies documents were actually searched.
+NO_DOCUMENTS_MESSAGE = "There's nothing to search yet. Upload a document to get started."
 
 # AC-030: shown instead of calling the model at all when the caller has
 # documents but none has finished processing yet.
@@ -144,7 +174,8 @@ def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
 
 def _retrieve_relevant_chunks(db: DBSession, user_id: uuid.UUID, question: str) -> list[Chunk]:
     """The caller's own chunks, from ready documents only, most relevant to
-    `question` first -- AC-027/AC-029.
+    `question` first, restricted to those scoring at or above
+    `SIMILARITY_THRESHOLD` -- AC-027/AC-029/AC-031/AC-032.
 
     `get_ready_chunks` (built for US-009-1) already restricts the candidate
     set to this user's chunks on documents whose status is `ready`; this
@@ -171,16 +202,64 @@ def _retrieve_relevant_chunks(db: DBSession, user_id: uuid.UUID, question: str) 
 
 
 def _build_prompt(question: str, chunks: list[Chunk]) -> list[Mapping[str, str]]:
-    if chunks:
-        excerpts = "\n\n".join(
-            f"[{index}] (page {chunk.page}): {chunk.content}"
-            for index, chunk in enumerate(chunks, start=1)
-        )
-    else:
-        excerpts = NO_EXCERPTS_PLACEHOLDER
+    """The single user turn sent to the model.
 
+    Only called once `chunks` is known to be non-empty -- AC-032 requires
+    the model is never invoked with an empty-excerpt prompt that would let
+    it supply a free, outside-knowledge answer; that case is handled by
+    `REFUSAL_MESSAGE` before this is reached.
+    """
+    excerpts = "\n\n".join(
+        f"[[{index}]] (page {chunk.page}): {chunk.content}"
+        for index, chunk in enumerate(chunks, start=1)
+    )
     user_turn = f"{SYSTEM_PROMPT}\n\nExcerpts:\n{excerpts}\n\nQuestion: {question}"
     return [{"role": "user", "content": user_turn}]
+
+
+def _extract_citations(answer: str, chunks: list[Chunk]) -> list[tuple[int, Chunk]]:
+    """`(n, chunk)` pairs for every `[[n]]` marker the model actually wrote,
+    in the order they first appear, deduplicated, and restricted to `n`
+    values that index into `chunks` -- the exact excerpts the model was
+    given.
+
+    A marker for any other `n` (a number the model invented, or one left
+    over from a different turn) is silently dropped here, before a single
+    row is streamed or persisted (AC-036).
+    """
+    seen: set[int] = set()
+    cited: list[tuple[int, Chunk]] = []
+    for match in _CITATION_MARKER_RE.finditer(answer):
+        n = int(match.group(1))
+        if n in seen or not (1 <= n <= len(chunks)):
+            continue
+        seen.add(n)
+        cited.append((n, chunks[n - 1]))
+    return cited
+
+
+def _citation_payload(n: int, chunk: Chunk) -> dict[str, object]:
+    quoted_passage = chunk.content[:MAX_QUOTED_PASSAGE_CHARS]
+    return {
+        "n": n,
+        "document": chunk.document.filename,
+        "page": chunk.page,
+        "quoted_passage": quoted_passage,
+    }
+
+
+def _message_payload(message: Message, citations: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "id": str(message.id),
+        "role": message.role,
+        "content": message.content,
+        "citations": citations,
+        "created_at": _isoformat(message.created_at),
+    }
+
+
+def _isoformat(value: datetime) -> str:
+    return value.isoformat()
 
 
 def _is_first_question(db: DBSession, conversation_id: uuid.UUID) -> bool:
@@ -202,6 +281,37 @@ def _apply_auto_title(conversation: Conversation, question: str, is_first_questi
         conversation.title = title
 
 
+async def _persist_fixed_reply(
+    db: DBSession,
+    conversation: Conversation,
+    user_id: uuid.UUID,
+    question: str,
+    reply: str,
+    is_first_question: bool,
+) -> AsyncIterator[str]:
+    """Persist `question`/`reply` as a user/assistant turn with no
+    citations and no model call, then stream it exactly as `token`
+    events would for a real answer -- used by every refusal path
+    (AC-031, AC-032, AC-033) so the client sees one consistent shape
+    regardless of why the model was not called.
+    """
+    user_message = Message(
+        conversation_id=conversation.id, user_id=user_id, role="user", content=question
+    )
+    assistant_message = Message(
+        conversation_id=conversation.id, user_id=user_id, role="assistant", content=reply
+    )
+    db.add(user_message)
+    db.add(assistant_message)
+    _apply_auto_title(conversation, question, is_first_question)
+    db.flush()
+    db.commit()
+
+    yield _sse("token", {"token": reply})
+    yield _sse("citations", {"citations": []})
+    yield _sse("done", {"message": _message_payload(assistant_message, [])})
+
+
 async def _stream_answer(
     conversation_id: uuid.UUID, user_id: uuid.UUID, question: str
 ) -> AsyncIterator[str]:
@@ -211,8 +321,9 @@ async def _stream_answer(
     session closes once the handler returns the `StreamingResponse`, but
     this generator keeps running for the lifetime of the stream. Nothing is
     written to the database until the full answer has streamed
-    successfully; a provider failure at any point yields an `error` event
-    and leaves no trace of this turn.
+    successfully (or a refusal path is taken deliberately); a provider
+    failure at any point yields an `error` event and leaves no trace of
+    this turn.
     """
     db = SessionLocal()
     try:
@@ -232,28 +343,22 @@ async def _stream_answer(
             .scalars()
             .all()
         )
-        has_ready_document = any(document.status == "ready" for document in documents)
 
-        if documents and not has_ready_document:
+        if not documents:
+            # AC-033: distinct from every other refusal, and no model call.
+            async for event in _persist_fixed_reply(
+                db, conversation, user_id, question, NO_DOCUMENTS_MESSAGE, is_first_question
+            ):
+                yield event
+            return
+
+        has_ready_document = any(document.status == "ready" for document in documents)
+        if not has_ready_document:
             # AC-030: no chat model call at all.
-            db.add(
-                Message(
-                    conversation_id=conversation.id, user_id=user_id, role="user", content=question
-                )
-            )
-            db.add(
-                Message(
-                    conversation_id=conversation.id,
-                    user_id=user_id,
-                    role="assistant",
-                    content=PROCESSING_MESSAGE,
-                )
-            )
-            _apply_auto_title(conversation, question, is_first_question)
-            db.commit()
-            yield _sse("token", {"text": PROCESSING_MESSAGE})
-            yield _sse("citations", {"citations": []})
-            yield _sse("done", {})
+            async for event in _persist_fixed_reply(
+                db, conversation, user_id, question, PROCESSING_MESSAGE, is_first_question
+            ):
+                yield event
             return
 
         try:
@@ -262,13 +367,22 @@ async def _stream_answer(
             yield _sse("error", {"message": _RETRIEVAL_ERROR_MESSAGE})
             return
 
+        if not relevant_chunks:
+            # AC-031/AC-032: nothing scored above the threshold -- never
+            # call the chat model with an empty-excerpt prompt.
+            async for event in _persist_fixed_reply(
+                db, conversation, user_id, question, REFUSAL_MESSAGE, is_first_question
+            ):
+                yield event
+            return
+
         messages = _build_prompt(question, relevant_chunks)
 
         collected: list[str] = []
         try:
             for token in chat_stream(messages):
                 collected.append(token)
-                yield _sse("token", {"text": token})
+                yield _sse("token", {"token": token})
         except GeminiProviderError:
             # Nothing has been added to this session, so there is nothing
             # to roll back -- the failure simply never gets persisted.
@@ -276,6 +390,7 @@ async def _stream_answer(
             return
 
         answer = "".join(collected)
+        cited = _extract_citations(answer, relevant_chunks)
 
         user_message = Message(
             conversation_id=conversation.id, user_id=user_id, role="user", content=question
@@ -288,31 +403,24 @@ async def _stream_answer(
         db.flush()
 
         citations_payload: list[dict[str, object]] = []
-        for chunk in relevant_chunks:
-            quoted_passage = chunk.content[:500]
+        for n, chunk in cited:
+            payload = _citation_payload(n, chunk)
             db.add(
                 Citation(
                     message_id=assistant_message.id,
                     chunk_id=chunk.id,
                     document_id=chunk.document_id,
                     page=chunk.page,
-                    quoted_passage=quoted_passage,
+                    quoted_passage=payload["quoted_passage"],
                 )
             )
-            citations_payload.append(
-                {
-                    "document_id": str(chunk.document_id),
-                    "chunk_id": str(chunk.id),
-                    "page": chunk.page,
-                    "quoted_passage": quoted_passage,
-                }
-            )
+            citations_payload.append(payload)
 
         _apply_auto_title(conversation, question, is_first_question)
         db.commit()
 
         yield _sse("citations", {"citations": citations_payload})
-        yield _sse("done", {})
+        yield _sse("done", {"message": _message_payload(assistant_message, citations_payload)})
     finally:
         db.close()
 

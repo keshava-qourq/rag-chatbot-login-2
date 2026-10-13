@@ -1,4 +1,5 @@
 import * as React from "react";
+import { Link } from "react-router-dom";
 
 import { ApiError } from "@/lib/api";
 import {
@@ -9,10 +10,9 @@ import {
   deleteConversation,
   getConversation,
   listConversations,
-  NO_READY_DOCUMENTS,
   renameConversation,
 } from "@/lib/conversations";
-import { listDocuments } from "@/lib/documents";
+import { type Document, listDocuments } from "@/lib/documents";
 import { Icons } from "@/lib/icons";
 import { Badge, Button, Empty, Textarea } from "@/lib/ui";
 
@@ -20,7 +20,6 @@ const { Plus, Trash, Edit, ArrowRight, AlertCircle } = Icons;
 
 type ListState = "loading" | "error" | "ready";
 type ThreadState = "idle" | "loading" | "error" | "ready";
-type DocCounts = { ready: number; processing: number };
 type Citation = NonNullable<Message["citations"]>[number];
 
 function actionErrorMessage(err: unknown, fallback: string): string {
@@ -29,10 +28,23 @@ function actionErrorMessage(err: unknown, fallback: string): string {
 
 /** Splits an assistant message's content on `[[n]]` markers and renders the
  * matching citation as an expandable chip inline, so the quoted passage
- * behind a claim is one click away without leaving the message. */
-function MessageContent({ content, citations }: { content: string; citations?: Citation[] }) {
+ * behind a claim is one click away without leaving the message. A
+ * citation's `n` is its 1-based position in the message's citations array
+ * -- the contract does not send the number back, only the ordered list --
+ * and its document name is resolved from `documentNames` since a citation
+ * itself only carries a `document_id`. */
+function MessageContent({
+  content,
+  citations,
+  documentNames,
+}: {
+  content: string;
+  citations?: Citation[];
+  documentNames: Map<string, string>;
+}) {
   const [expanded, setExpanded] = React.useState<number | null>(null);
-  const byNumber = new Map((citations ?? []).map((c) => [c.n, c]));
+  const list = citations ?? [];
+  const byNumber = new Map(list.map((citation, index) => [index + 1, citation]));
   const parts = content.split(/(\[\[\d+\]\])/g);
 
   return (
@@ -44,13 +56,14 @@ function MessageContent({ content, citations }: { content: string; citations?: C
           const n = Number(match[1]);
           const citation = byNumber.get(n);
           if (!citation) return <React.Fragment key={index}>{part}</React.Fragment>;
+          const documentName = documentNames.get(citation.document_id) ?? "Document";
           return (
             <button
               key={index}
               type="button"
               onClick={() => setExpanded((prev) => (prev === n ? null : n))}
               aria-expanded={expanded === n}
-              aria-label={`Citation ${n}`}
+              aria-label={`Citation ${n}: ${documentName}, page ${citation.page}`}
               className="mx-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-[var(--brand-hover)] align-super text-[10px] font-semibold text-[var(--brand-primary)]"
             >
               {n}
@@ -58,19 +71,22 @@ function MessageContent({ content, citations }: { content: string; citations?: C
           );
         })}
       </p>
-      {(citations ?? []).map((citation) =>
-        expanded === citation.n ? (
+      {list.map((citation, index) => {
+        const n = index + 1;
+        if (expanded !== n) return null;
+        const documentName = documentNames.get(citation.document_id) ?? "Document";
+        return (
           <div
-            key={citation.n}
+            key={citation.id || n}
             className="rounded-[var(--brand-radius)] border border-slate-200 bg-[var(--brand-surface)] p-3 text-xs text-[var(--brand-fg-muted)]"
           >
             <p className="font-medium text-[var(--brand-fg)]">
-              {citation.document} · p.{citation.page}
+              {documentName} · p.{citation.page}
             </p>
             <p className="mt-1 italic">&ldquo;{citation.quoted_passage}&rdquo;</p>
           </div>
-        ) : null,
-      )}
+        );
+      })}
     </div>
   );
 }
@@ -87,7 +103,7 @@ export default function Chat() {
   const [sendError, setSendError] = React.useState<string | null>(null);
   const [sending, setSending] = React.useState(false);
 
-  const [docCounts, setDocCounts] = React.useState<DocCounts | null>(null);
+  const [documents, setDocuments] = React.useState<Document[] | null>(null);
   const [question, setQuestion] = React.useState("");
   const [renamingId, setRenamingId] = React.useState<string | null>(null);
   const [renameValue, setRenameValue] = React.useState("");
@@ -117,15 +133,11 @@ export default function Chat() {
     listDocuments()
       .then((docs) => {
         if (cancelled) return;
-        const ready = docs.filter((d) => d.status === "ready").length;
-        const processing = docs.filter(
-          (d) => d.status === "processing" || d.status === "queued",
-        ).length;
-        setDocCounts({ ready, processing });
+        setDocuments(docs);
       })
       .catch(() => {
         if (cancelled) return;
-        setDocCounts({ ready: 0, processing: 0 });
+        setDocuments([]);
       });
     return () => {
       cancelled = true;
@@ -241,9 +253,20 @@ export default function Chat() {
     });
   }, []);
 
+  const readyCount = documents?.filter((d) => d.status === "ready").length ?? 0;
+  const processingCount =
+    documents?.filter((d) => d.status === "processing" || d.status === "queued").length ?? 0;
+  const noDocumentsAtAll = documents !== null && documents.length === 0;
+  const noReadyDocuments = documents !== null && documents.length > 0 && readyCount === 0;
+  const composerBlocked = noDocumentsAtAll || noReadyDocuments;
+  const documentNames = React.useMemo(
+    () => new Map((documents ?? []).map((d) => [d.id, d.filename])),
+    [documents],
+  );
+
   const handleSend = React.useCallback(async () => {
     const text = question.trim();
-    if (!text || sending) return;
+    if (!text || sending || composerBlocked) return;
     setQuestion("");
 
     let conversationId = selectedId;
@@ -259,7 +282,7 @@ export default function Chat() {
       }
     }
     await runQuestion(conversationId, text);
-  }, [question, sending, selectedId, runQuestion]);
+  }, [question, sending, composerBlocked, selectedId, runQuestion]);
 
   const handleRetry = React.useCallback(() => {
     if (!selectedId || !lastQuestionRef.current) return;
@@ -272,9 +295,6 @@ export default function Chat() {
       void handleSend();
     }
   };
-
-  const documentsProcessing = docCounts !== null && docCounts.ready === 0;
-  const noReadyDocumentsError = sendError === NO_READY_DOCUMENTS;
 
   return (
     <div className="flex h-full min-h-screen">
@@ -376,10 +396,10 @@ export default function Chat() {
           >
             {"Chat"}
           </h1>
-          {docCounts ? (
+          {documents !== null ? (
             <div className="flex items-center gap-2">
-              <Badge variant="success">{`${docCounts.ready} ready`}</Badge>
-              <Badge variant="warning">{`${docCounts.processing} processing`}</Badge>
+              <Badge variant="success">{`${readyCount} ready`}</Badge>
+              <Badge variant="warning">{`${processingCount} processing`}</Badge>
             </div>
           ) : null}
         </header>
@@ -399,7 +419,26 @@ export default function Chat() {
             </div>
           ) : null}
 
-          {(threadState === "idle" || threadState === "ready") && messages.length === 0 ? (
+          {(threadState === "idle" || threadState === "ready") &&
+          messages.length === 0 &&
+          noDocumentsAtAll ? (
+            <Empty
+              title="Nothing to search yet"
+              description="Upload a document to start asking questions about it."
+              action={
+                <Link
+                  to="/documents"
+                  className="text-sm font-medium text-[var(--brand-primary)] underline"
+                >
+                  {"Upload a document"}
+                </Link>
+              }
+            />
+          ) : null}
+
+          {(threadState === "idle" || threadState === "ready") &&
+          messages.length === 0 &&
+          !noDocumentsAtAll ? (
             <Empty
               title="Ask a question about your documents"
               description="Answers are grounded in the documents you've uploaded, with citations you can expand."
@@ -420,7 +459,11 @@ export default function Chat() {
                   }`}
                 >
                   {message.role === "assistant" ? (
-                    <MessageContent content={message.content} citations={message.citations} />
+                    <MessageContent
+                      content={message.content}
+                      citations={message.citations}
+                      documentNames={documentNames}
+                    />
                   ) : (
                     <p className="whitespace-pre-wrap text-sm">{message.content}</p>
                   )}
@@ -438,7 +481,7 @@ export default function Chat() {
             ) : null}
           </ul>
 
-          {sendError && !noReadyDocumentsError ? (
+          {sendError ? (
             <div
               role="alert"
               className="mt-4 flex items-center gap-3 rounded-[var(--brand-radius)] border border-red-200 bg-red-50 p-4 text-sm text-red-700"
@@ -453,7 +496,15 @@ export default function Chat() {
         </div>
 
         <footer className="border-t p-4" style={{ borderColor: "var(--brand-border)" }}>
-          {documentsProcessing || noReadyDocumentsError ? (
+          {noDocumentsAtAll ? (
+            <p
+              role="status"
+              className="mb-2 flex items-center gap-2 text-sm text-[var(--brand-fg-muted)]"
+            >
+              <AlertCircle size={14} />
+              {"Upload a document before you can ask a question."}
+            </p>
+          ) : noReadyDocuments ? (
             <p
               role="status"
               className="mb-2 flex items-center gap-2 text-sm text-[var(--brand-fg-muted)]"
@@ -471,13 +522,13 @@ export default function Chat() {
               onChange={(e) => setQuestion(e.target.value)}
               onKeyDown={handleComposerKeyDown}
               placeholder="Ask a question about your documents…"
-              disabled={sending || documentsProcessing}
+              disabled={sending || composerBlocked}
               className="flex-1"
             />
             <Button
               type="button"
               onClick={() => void handleSend()}
-              disabled={sending || documentsProcessing || !question.trim()}
+              disabled={sending || composerBlocked || !question.trim()}
             >
               {sending ? "Sending…" : <ArrowRight size={16} />}
             </Button>
