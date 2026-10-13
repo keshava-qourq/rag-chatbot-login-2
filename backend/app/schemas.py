@@ -66,3 +66,43 @@ class DocumentResponse(BaseModel):
     size_bytes: int
     status: str
     failure_reason: str | None = None
+
+
+class CitationResponse(BaseModel):
+    """One citation attached to an assistant message."""
+
+    id: str
+    document_id: str
+    page: int
+    quoted_passage: str
+
+
+class MessageResponse(BaseModel):
+    """One message in a conversation, with any citations it carries.
+
+    `citations` is always empty for a `user` message; an `assistant` message
+    carries one citation per retrieved chunk it drew its answer from.
+    """
+
+    id: str
+    role: str
+    content: str
+    created_at: datetime
+    citations: list[CitationResponse] = []
+
+
+class ConversationResponse(BaseModel):
+    """What GET/POST /conversations and PATCH /conversations/{id} return."""
+
+    id: str
+    title: str
+    title_locked: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class ConversationDetailResponse(ConversationResponse):
+    """What GET /conversations/{id} returns: the conversation plus every
+    message, in the order they were sent, each with its own citations."""
+
+    messages: list[MessageResponse] = []

@@ -1,10 +1,10 @@
 """The single Gemini client module.
 
 The approved architecture names exactly one model provider. Every embedding
-or chat call in this codebase goes through `embed` and `chat` here -- this is
-the only module that imports the `google-genai` SDK, so there is exactly one
-place that enforces the required configuration, retries a flaky call behind
-a hard timeout, and redacts what reaches the logs.
+or chat call in this codebase goes through `embed`, `chat` and `chat_stream`
+here -- this is the only module that imports the `google-genai` SDK, so
+there is exactly one place that enforces the required configuration, retries
+a flaky call behind a hard timeout, and redacts what reaches the logs.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import logging
 import os
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 
 from google import genai
@@ -311,6 +311,80 @@ def chat(
     ) from last_error
 
 
+def chat_stream(
+    messages: Sequence[Mapping[str, str]],
+    *,
+    correlation_id: str | None = None,
+) -> Iterator[str]:
+    """Generate a chat completion as a stream of text deltas.
+
+    Only opening the stream is retried behind the same timeout/retry
+    contract as `chat`; once the first token has been handed to the caller a
+    failure is raised as `GeminiProviderError` rather than retried --
+    retrying mid-stream would duplicate tokens the caller (the conversations
+    endpoint) has already forwarded downstream.
+    """
+    config = get_config()
+    client = _get_client(config)
+    correlation_id = correlation_id or str(uuid.uuid4())
+    contents = [
+        types.Content(role=m["role"], parts=[types.Part(text=m["content"])]) for m in messages
+    ]
+
+    last_error: Exception | None = None
+    stream = None
+    for attempt in range(1, config.max_retries + 1):
+        try:
+            stream = _call_with_timeout(
+                client.models.generate_content_stream,
+                config.timeout_seconds,
+                model=config.chat_model,
+                contents=contents,
+            )
+            break
+        except Exception as exc:  # noqa: BLE001 -- normalised below
+            last_error = exc
+            _log_call(
+                "gemini chat stream open failed",
+                logging.WARNING,
+                model=config.chat_model,
+                correlation_id=correlation_id,
+                attempt=attempt,
+                input_size=len(messages),
+            )
+            if attempt < config.max_retries:
+                time.sleep(0.5 * attempt)
+
+    if stream is None:
+        raise GeminiProviderError(
+            f"Gemini chat stream call failed after {config.max_retries} attempts: {last_error}"
+        ) from last_error
+
+    output_size = 0
+    start = time.monotonic()
+    try:
+        for chunk in stream:
+            text = getattr(chunk, "text", None) or ""
+            if not text:
+                continue
+            output_size += len(text)
+            yield text
+    except Exception as exc:  # noqa: BLE001 -- normalised to GeminiProviderError
+        raise GeminiProviderError(f"Gemini chat stream failed mid-stream: {exc}") from exc
+    finally:
+        latency_ms = (time.monotonic() - start) * 1000
+        _log_call(
+            "gemini chat stream call",
+            logging.INFO,
+            model=config.chat_model,
+            correlation_id=correlation_id,
+            attempt=1,
+            input_size=len(messages),
+            output_size=output_size,
+            latency_ms=round(latency_ms, 2),
+        )
+
+
 __all__ = [
     "GEMINI_API_KEY_VAR",
     "DEFAULT_EMBEDDING_MODEL",
@@ -326,5 +400,6 @@ __all__ = [
     "gemini_status",
     "embed",
     "chat",
+    "chat_stream",
     "logger",
 ]
