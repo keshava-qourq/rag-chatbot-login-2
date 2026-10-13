@@ -1,0 +1,100 @@
+{
+  "architecture_npm": [
+    "react-dropzone",
+    "react-markdown"
+  ],
+  "key": {
+    "app_design_id": "d338dd9f-064c-4e4d-9c49-4c7a25cbc36f",
+    "app_design_version": 1,
+    "architecture_document_id": "736b6a40-d70b-4a11-8ec0-4a59e0a26fa2",
+    "architecture_version": 1
+  },
+  "outcome": "prepared",
+  "packages": [
+    {
+      "ecosystem": "pypi",
+      "installed_version": "6.20.1",
+      "name": "pypdf",
+      "status": "installed",
+      "version": ">=4.0"
+    },
+    {
+      "ecosystem": "pypi",
+      "installed_version": "1.2.0",
+      "name": "python-docx",
+      "status": "installed",
+      "version": ">=1.1"
+    },
+    {
+      "ecosystem": "pypi",
+      "installed_version": "0.8.6",
+      "name": "google-generativeai",
+      "status": "installed",
+      "version": ">=0.8"
+    },
+    {
+      "ecosystem": "pypi",
+      "installed_version": "0.28.0",
+      "name": "arq",
+      "status": "installed",
+      "version": ">=0.26"
+    },
+    {
+      "ecosystem": "pypi",
+      "installed_version": "5.3.1",
+      "name": "redis",
+      "status": "installed",
+      "version": ">=5.0"
+    },
+    {
+      "ecosystem": "pypi",
+      "installed_version": "1.43.112",
+      "name": "boto3",
+      "status": "installed",
+      "version": ">=1.34"
+    },
+    {
+      "ecosystem": "pypi",
+      "installed_version": "1.7.4",
+      "name": "passlib",
+      "status": "installed",
+      "version": ">=1.7"
+    },
+    {
+      "ecosystem": "pypi",
+      "installed_version": "0.5.1",
+      "name": "pgvector",
+      "status": "installed",
+      "version": ">=0.3"
+    },
+    {
+      "ecosystem": "pypi",
+      "installed_version": "0.0.32",
+      "name": "python-multipart",
+      "status": "installed",
+      "version": ">=0.0.9"
+    },
+    {
+      "ecosystem": "pypi",
+      "installed_version": "2.3.0",
+      "name": "email-validator",
+      "status": "installed",
+      "version": ">=2.0"
+    },
+    {
+      "ecosystem": "npm",
+      "installed_version": "10.1.0",
+      "name": "react-markdown",
+      "status": "installed",
+      "version": ">=9.0"
+    },
+    {
+      "ecosystem": "npm",
+      "installed_version": "20.1.3",
+      "name": "react-dropzone",
+      "status": "installed",
+      "version": ">=14.0"
+    }
+  ],
+  "prepared_by_run": "ac74c31a-9c28-4457-a6c4-769a20fef2b8"
+}
