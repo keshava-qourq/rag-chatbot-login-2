@@ -153,9 +153,7 @@ test.describe("POST /documents and GET /documents -- upload contract", () => {
       const ids = new Set(body.map((doc) => doc.id));
       expect(ids.size).toBe(2);
       expect(body.every((doc) => doc.status === "queued")).toBe(true);
-      expect(new Set(body.map((doc) => doc.filename))).toEqual(
-        new Set(["alpha.txt", "beta.md"]),
-      );
+      expect(new Set(body.map((doc) => doc.filename))).toEqual(new Set(["alpha.txt", "beta.md"]));
     } finally {
       await owner.dispose();
     }
@@ -191,8 +189,5 @@ test.describe("Document library screen (browser)", () => {
   // not the account's real documents. The API-level specs above prove the
   // backend half of this ticket; wiring the screen to the live endpoint is
   // unimplemented and belongs to a follow-up frontend ticket.
-  test.skip(
-    "AC-010: a file selected on the Documents screen is stored and listed via the real backend -- skipped: Documents.tsx is a static mock with no network call to POST or GET /documents",
-    async () => {},
-  );
+  test.skip("AC-010: a file selected on the Documents screen is stored and listed via the real backend -- skipped: Documents.tsx is a static mock with no network call to POST or GET /documents", async () => {});
 });
