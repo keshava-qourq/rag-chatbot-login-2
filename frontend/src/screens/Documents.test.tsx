@@ -1,108 +1,220 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act } from "react";
+
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { ApiError } from "@/lib/api";
+import * as documentsApi from "@/lib/documents";
 
 import Documents from "./Documents";
-
-// The screen seeds itself with demo data and only swaps it in after a short
-// simulated "checking your library" delay (see the `loading` state in
-// Documents.tsx). Every test waits for that known first document to appear
-// before interacting, so an upload is never raced against the skeleton.
-const FIRST_SEED_FILENAME = "Northbrook-Pension-Scheme-Rules-2026.pdf";
 
 function renderDocuments() {
   return render(
     <MemoryRouter initialEntries={["/documents"]}>
       <Routes>
         <Route path="/documents" element={<Documents />} />
-        <Route path="/chat" element={<div>Chat screen</div>} />
         <Route path="/getting-started" element={<div>Getting started screen</div>} />
       </Routes>
     </MemoryRouter>,
   );
 }
 
-async function waitForLibraryLoaded() {
-  await screen.findByText(FIRST_SEED_FILENAME, {}, { timeout: 3000 });
-}
-
-function getFileInput(): HTMLInputElement {
-  return screen.getByLabelText(/choose documents to upload/i) as HTMLInputElement;
-}
-
-// Builds a File with a `size` the component can read without actually
-// allocating that many bytes of content -- `size` is an own-property
-// override, which shadows the real (content-derived) Blob getter.
 function makeFile(name: string, sizeBytes: number, type: string): File {
   const file = new File(["x"], name, { type });
   Object.defineProperty(file, "size", { value: sizeBytes });
   return file;
 }
 
-// Sets the input's selected files directly and fires a native `change`
-// event. Deliberately not `userEvent.upload`: that helper simulates a real
-// OS file picker and filters candidates against the input's `accept`
-// attribute before the component ever sees them, which would silently drop
-// exactly the unsupported/oversized files these tests exist to exercise.
+function getFileInput(): HTMLInputElement {
+  return screen.getByLabelText(/choose documents to upload/i) as HTMLInputElement;
+}
+
 function selectFiles(input: HTMLInputElement, files: File[]) {
   Object.defineProperty(input, "files", { value: files, configurable: true });
   fireEvent.change(input);
 }
 
-describe("Documents library upload", () => {
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  url: string;
+  withCredentials: boolean;
+  listeners: Record<string, Array<(event: MessageEvent) => void>> = {};
+  close = vi.fn();
+
+  constructor(url: string, options?: { withCredentials?: boolean }) {
+    this.url = url;
+    this.withCredentials = options?.withCredentials ?? false;
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: (event: MessageEvent) => void) {
+    this.listeners[type] = [...(this.listeners[type] ?? []), listener];
+  }
+
+  removeEventListener(type: string, listener: (event: MessageEvent) => void) {
+    this.listeners[type] = (this.listeners[type] ?? []).filter((l) => l !== listener);
+  }
+
+  emit(type: string, data: unknown) {
+    const event = { data: JSON.stringify(data) } as MessageEvent;
+    for (const listener of this.listeners[type] ?? []) listener(event);
+  }
+}
+
+describe("Documents library", () => {
+  beforeEach(() => {
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
-  it("AC-010: a supported file is queued and appears at the top of the library immediately", async () => {
+  it("AC-014: lists documents from GET /documents with name, date, size and status badge", async () => {
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([
+      {
+        id: "1",
+        filename: "lease.pdf",
+        created_at: "2026-01-05T00:00:00Z",
+        size_bytes: 2048,
+        status: "ready",
+      },
+    ]);
+
     renderDocuments();
-    await waitForLibraryLoaded();
 
-    selectFiles(getFileInput(), [makeFile("meeting-minutes.txt", 1024, "text/plain")]);
+    const heading = await screen.findByText("lease.pdf");
+    const row = heading.closest("li") as HTMLElement;
+    expect(within(row).getByText(/ready/i)).toBeInTheDocument();
+    expect(within(row).getByText(/2\.0 KB/)).toBeInTheDocument();
+  });
 
-    const headings = await screen.findAllByRole("heading", { level: 3 });
+  it("shows a loading state before the list resolves", async () => {
+    let resolve: (docs: documentsApi.Document[]) => void = () => {};
+    vi.spyOn(documentsApi, "listDocuments").mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+
+    renderDocuments();
+    expect(screen.getByText(/loading your documents/i)).toBeInTheDocument();
+    await act(async () => {
+      resolve([]);
+    });
+    await waitFor(() =>
+      expect(screen.queryByText(/loading your documents/i)).not.toBeInTheDocument(),
+    );
+  });
+
+  it("shows an error state when GET /documents fails", async () => {
+    vi.spyOn(documentsApi, "listDocuments").mockRejectedValue(new Error("network down"));
+
+    renderDocuments();
+
+    expect(await screen.findByText(/couldn.t load your documents/i)).toBeInTheDocument();
+  });
+
+  it("AC-016: shows an empty state with a link to getting-started when the list is empty", async () => {
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([]);
+
+    renderDocuments();
+
+    expect(await screen.findByText(/no documents yet/i)).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /getting started/i });
+    expect(link).toHaveAttribute("href", "/getting-started");
+  });
+
+  it("AC-010: uploading a file posts to POST /documents and shows it at the top without a refetch", async () => {
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([
+      {
+        id: "existing",
+        filename: "existing.pdf",
+        created_at: "2026-01-01T00:00:00Z",
+        size_bytes: 1024,
+        status: "ready",
+      },
+    ]);
+    const uploadSpy = vi.spyOn(documentsApi, "uploadDocuments").mockResolvedValue([
+      {
+        id: "new",
+        filename: "meeting-minutes.txt",
+        created_at: "2026-01-10T00:00:00Z",
+        size_bytes: 512,
+        status: "queued",
+      },
+    ]);
+
+    renderDocuments();
+    await screen.findByText("existing.pdf");
+
+    selectFiles(getFileInput(), [makeFile("meeting-minutes.txt", 512, "text/plain")]);
+
+    await screen.findByText("meeting-minutes.txt");
+    expect(uploadSpy).toHaveBeenCalledTimes(1);
+
+    const headings = screen.getAllByRole("heading", { level: 3 });
     expect(headings[0]).toHaveTextContent("meeting-minutes.txt");
-
-    const row = headings[0].closest("li") as HTMLElement;
-    expect(within(row).getByText(/queued/i)).toBeInTheDocument();
+    expect(listDocumentsCallCount(documentsApi)).toBe(1);
   });
 
-  it("AC-011: a file over the size ceiling is rejected before being added, naming the limit and the file's actual size", async () => {
+  function listDocumentsCallCount(mod: typeof documentsApi) {
+    return (mod.listDocuments as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+  }
+
+  it("AC-011/AC-012: surfaces the server's own error detail verbatim and leaves the list unchanged", async () => {
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([]);
+    vi.spyOn(documentsApi, "uploadDocuments").mockRejectedValue(
+      new ApiError(
+        413,
+        {
+          detail:
+            "huge.pdf is 26214400 bytes, which exceeds the maximum allowed upload size of 26214400 bytes.",
+        },
+        "huge.pdf is 26214400 bytes, which exceeds the maximum allowed upload size of 26214400 bytes.",
+      ),
+    );
+
     renderDocuments();
-    await waitForLibraryLoaded();
+    await screen.findByText(/no documents yet/i);
 
-    selectFiles(getFileInput(), [makeFile("huge-report.pdf", 26 * 1024 * 1024, "application/pdf")]);
+    selectFiles(getFileInput(), [makeFile("huge.pdf", 26 * 1024 * 1024, "application/pdf")]);
 
-    const notice = await screen.findByText(/huge-report\.pdf.*is too large/i);
-    const container = notice.closest("div") as HTMLElement;
-    // The actual limit (25.0 MB) and the file's actual size (26.0 MB) are
-    // both named, not just a generic "too big" message.
-    expect(within(container).getByText(/25\.0 MB/)).toBeInTheDocument();
-    expect(within(container).getByText(/26\.0 MB/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/huge\.pdf is 26214400 bytes, which exceeds the maximum/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("huge.pdf")).not.toBeInTheDocument();
 
-    // Rejected before it was ever treated as a document: nothing was added.
-    expect(screen.queryByText("huge-report.pdf")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /dismiss error/i }));
+    expect(
+      screen.queryByText(/huge\.pdf is 26214400 bytes, which exceeds the maximum/i),
+    ).not.toBeInTheDocument();
   });
 
-  it("AC-012: a file of an unsupported type is rejected, listing every supported type", async () => {
+  it("AC-013: a multi-file upload shows each returned document as its own row with its own status badge", async () => {
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([]);
+    vi.spyOn(documentsApi, "uploadDocuments").mockResolvedValue([
+      {
+        id: "alpha",
+        filename: "alpha.txt",
+        created_at: "2026-01-10T00:00:00Z",
+        size_bytes: 1024,
+        status: "queued",
+      },
+      {
+        id: "beta",
+        filename: "beta.md",
+        created_at: "2026-01-10T00:00:00Z",
+        size_bytes: 2048,
+        status: "queued",
+      },
+    ]);
+
     renderDocuments();
-    await waitForLibraryLoaded();
-
-    selectFiles(getFileInput(), [makeFile("payroll.xlsx", 1024, "application/vnd.ms-excel")]);
-
-    const notice = await screen.findByText(/can.t read/i);
-    const container = notice.closest("div") as HTMLElement;
-    expect(within(container).getByText(/PDF/)).toBeInTheDocument();
-    expect(within(container).getByText(/Word/)).toBeInTheDocument();
-    expect(within(container).getByText(/Markdown/)).toBeInTheDocument();
-    expect(within(container).getByText(/plain text/)).toBeInTheDocument();
-
-    expect(screen.queryByText("payroll.xlsx")).not.toBeInTheDocument();
-  });
-
-  it("AC-013: selecting several supported files at once creates one independent, separately-queued entry per file", async () => {
-    renderDocuments();
-    await waitForLibraryLoaded();
+    await screen.findByText(/no documents yet/i);
 
     selectFiles(getFileInput(), [
       makeFile("alpha.txt", 1024, "text/plain"),
@@ -111,27 +223,44 @@ describe("Documents library upload", () => {
 
     const alphaHeading = await screen.findByText("alpha.txt");
     const betaHeading = screen.getByText("beta.md");
-
     const alphaRow = alphaHeading.closest("li") as HTMLElement;
     const betaRow = betaHeading.closest("li") as HTMLElement;
 
-    // Two distinct rows, each independently showing its own queued status.
     expect(alphaRow).not.toBe(betaRow);
     expect(within(alphaRow).getByText(/queued/i)).toBeInTheDocument();
     expect(within(betaRow).getByText(/queued/i)).toBeInTheDocument();
   });
 
-  it("rejects one invalid file in a multi-select without blocking the valid ones", async () => {
-    renderDocuments();
-    await waitForLibraryLoaded();
-
-    selectFiles(getFileInput(), [
-      makeFile("good.txt", 512, "text/plain"),
-      makeFile("bad.exe", 512, "application/octet-stream"),
+  it("AC-015: updates a document's status in place from an SSE status event, and closes the subscription on unmount", async () => {
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([
+      {
+        id: "doc-1",
+        filename: "report.pdf",
+        created_at: "2026-01-01T00:00:00Z",
+        size_bytes: 1024,
+        status: "queued",
+      },
     ]);
 
-    expect(await screen.findByText("good.txt")).toBeInTheDocument();
-    expect(screen.queryByText("bad.exe")).not.toBeInTheDocument();
-    expect(await screen.findByText(/can.t read/i)).toBeInTheDocument();
+    const { unmount } = renderDocuments();
+    const heading = await screen.findByText("report.pdf");
+    let row = heading.closest("li") as HTMLElement;
+    expect(within(row).getByText(/queued/i)).toBeInTheDocument();
+
+    const source = FakeEventSource.instances[0];
+    expect(source).toBeDefined();
+    expect(source.withCredentials).toBe(true);
+
+    act(() => {
+      source.emit("status", { id: "doc-1", status: "ready", filename: "report.pdf" });
+    });
+
+    await waitFor(() => {
+      row = screen.getByText("report.pdf").closest("li") as HTMLElement;
+      expect(within(row).getByText(/ready/i)).toBeInTheDocument();
+    });
+
+    unmount();
+    expect(source.close).toHaveBeenCalledTimes(1);
   });
 });
