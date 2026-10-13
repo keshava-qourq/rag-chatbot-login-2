@@ -14,7 +14,7 @@ target remains PostgreSQL 16 with the pgvector extension enabled.
 """
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, Uuid
@@ -37,9 +37,24 @@ EmbeddingType = Vector(768).with_variant(Text(), "sqlite")
 CreatedAt = Mapped[datetime]
 
 
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
 def created_at_column():
-    """`created_at timestamptz`, stamped by the database on insert."""
-    return mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    """`created_at timestamptz`, stamped on insert.
+
+    Stamped with a Python-side `default` (microsecond resolution) rather
+    than relying solely on `server_default=func.now()`: some backends --
+    notably SQLite, used for tests and local development -- only store
+    `CURRENT_TIMESTAMP` at second resolution, so two rows inserted within
+    the same second would otherwise compare equal and make
+    `ORDER BY created_at` nondeterministic between them. `server_default`
+    stays as a fallback for any row inserted outside the ORM.
+    """
+    return mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now(), nullable=False
+    )
 
 
 class User(Base):
@@ -138,8 +153,9 @@ class Conversation(Base):
     created_at: CreatedAt = created_at_column()
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
+        default=_utcnow,
         server_default=func.now(),
-        onupdate=func.now(),
+        onupdate=_utcnow,
         nullable=False,
     )
 

@@ -16,7 +16,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 import boto3
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pypdf import PdfReader
 from sqlalchemy import select
@@ -70,6 +70,14 @@ INGESTION_JOB_NAME = "process_document"
 # notifications; a 1s interval is frequent enough to feel live without
 # hammering the database.
 _EVENT_POLL_INTERVAL_SECONDS = 1.0
+
+# Hard ceiling on how long one connection to /documents/events is kept open.
+# `Request.is_disconnected()` is the primary way this generator learns the
+# client went away, but it is not guaranteed to fire promptly against every
+# transport (notably some ASGI test transports), so this is the backstop
+# that guarantees the generator -- and the thread or event loop running it --
+# always terminates rather than running for the lifetime of the process.
+_EVENT_STREAM_MAX_SECONDS = 60.0
 
 
 def _max_upload_bytes() -> int:
@@ -250,24 +258,29 @@ async def list_documents(
     user: User = _CurrentUserDependency,
     db: DBSession = _DBDependency,
 ) -> list[DocumentResponse]:
-    stmt = (
-        select(Document).where(Document.user_id == user.id).order_by(Document.created_at.desc())
-    )
+    stmt = select(Document).where(Document.user_id == user.id).order_by(Document.created_at.desc())
     documents = db.execute(stmt).scalars().all()
     return [_document_response(document) for document in documents]
 
 
-async def _document_event_stream(user_id: uuid.UUID) -> AsyncIterator[str]:
+async def _document_event_stream(user_id: uuid.UUID, request: Request) -> AsyncIterator[str]:
     """Poll this user's documents and emit one SSE event per status change.
 
     Runs its own session rather than the request's: the request's session
     closes once the handler returns, but this generator keeps running for as
-    long as the client stays connected.
+    long as the client stays connected. It stops as soon as the client
+    disconnects, or in any case after `_EVENT_STREAM_MAX_SECONDS`, so a
+    connection here is never a reason the process cannot exit.
     """
     last_known: dict[str, str] = {}
     db = SessionLocal()
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + _EVENT_STREAM_MAX_SECONDS
     try:
-        while True:
+        while loop.time() < deadline:
+            if await request.is_disconnected():
+                break
+
             stmt = select(Document).where(Document.user_id == user_id)
             documents = db.execute(stmt).scalars().all()
             for document in documents:
@@ -289,9 +302,11 @@ async def _document_event_stream(user_id: uuid.UUID) -> AsyncIterator[str]:
 
 
 @router.get("/documents/events")
-async def document_events(user: User = _CurrentUserDependency) -> StreamingResponse:
+async def document_events(
+    request: Request, user: User = _CurrentUserDependency
+) -> StreamingResponse:
     return StreamingResponse(
-        _document_event_stream(user.id),
+        _document_event_stream(user.id, request),
         media_type="text/event-stream",
     )
 
