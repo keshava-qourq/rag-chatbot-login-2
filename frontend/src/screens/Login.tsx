@@ -1,47 +1,43 @@
-// @ts-nocheck -- generated from the approved design under its JS runtime contract; not hand-written TypeScript.
-/* eslint-disable @typescript-eslint/no-unused-vars */
-import React from "react";
+import * as React from "react";
 
 import * as UI from "@/lib/ui";
 import { Icons } from "@/lib/icons";
 import { brand } from "@/lib/brand";
 import { useNavigate } from "@/lib/navigate";
+import { login, parseAuthError, useAuth } from "@/lib/auth";
+import { ApiError } from "@/lib/api";
 
-const { Button, Input, Label, Checkbox, Separator } = UI;
-const { Check, X, ChevronDown, FileText, Clock, ArrowRight, AlertCircle, CheckCircle } = Icons;
+const { Button, Label, Checkbox, Separator } = UI;
 
-const RECENT_SESSION = {
-  email: "rowan.hale@meridianlaw.co.uk",
-  lastSignIn: "11 Oct 2026, 08:46",
-};
+// `Input` in the shared kit is a plain function component, not a
+// `forwardRef`-wrapped one, so its exported type does not list `ref` in its
+// props. React 19 forwards the ref at runtime regardless; this cast only
+// tells the type checker what already works, so focus management can be
+// typed rather than `any`.
+const Input = UI.Input as unknown as React.ForwardRefExoticComponent<
+  React.InputHTMLAttributes<HTMLInputElement> & React.RefAttributes<HTMLInputElement>
+>;
 
 const REDIRECT_TARGET = { label: "Document library", route: "documents" };
-
-const MAX_ATTEMPTS = 5;
-
-const CHECK_TIMES = ["14:02", "14:09", "14:16", "14:23", "14:31"];
 
 const ASSURANCES = [
   {
     title: "Private to this account",
-    body:
-      "Your files, the text pulled out of them and every saved chat are scoped to your account alone. Nobody else can open them, and neither can an unauthenticated link.",
+    body: "Your files, the text pulled out of them and every saved chat are scoped to your account alone. Nobody else can open them, and neither can an unauthenticated link.",
   },
   {
     title: "Answers only from your documents",
-    body:
-      "The assistant reads your uploaded material and nothing else. When an answer isn’t in there, it says so rather than guessing from general knowledge.",
+    body: "The assistant reads your uploaded material and nothing else. When an answer isn’t in there, it says so rather than guessing from general knowledge.",
   },
   {
     title: "A session you can end",
-    body:
-      "Signing in sets a secure, HTTP-only cookie. Choosing log out invalidates it on the server straight away, on every device using it.",
+    body: "Signing in sets a secure, HTTP-only cookie. Choosing log out invalidates it on the server straight away, on every device using it.",
   },
 ];
 
 const SUPPORT_EMAIL = "support@ragdesk.app";
 
-const hexToRgba = (hex, alpha) => {
+const hexToRgba = (hex: string, alpha: number) => {
   const clean = String(hex || "").replace("#", "");
   const full =
     clean.length === 3
@@ -50,54 +46,39 @@ const hexToRgba = (hex, alpha) => {
           .map((c) => c + c)
           .join("")
       : clean;
-  const num = parseInt(full, 16);
-  if (Number.isNaN(num)) return `rgba(0,0,0,${alpha})`;
-  const r = (num >> 16) & 255;
-  const g = (num >> 8) & 255;
-  const b = num & 255;
+  const n = parseInt(full, 16);
+  if (Number.isNaN(n)) return `rgba(0,0,0,${alpha})`;
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
 
+type FieldErrors = { email?: string; password?: string };
+type Banner = { kind: "credentials" | "service"; message: string } | null;
+
 export default function Screen() {
   const navigate = useNavigate();
-  const [email, setEmail] = React.useState(RECENT_SESSION.email);
+  const { setUser } = useAuth();
+  const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [showPassword, setShowPassword] = React.useState(false);
   const [remember, setRemember] = React.useState(true);
   const [capsLock, setCapsLock] = React.useState(false);
-  const [fieldErrors, setFieldErrors] = React.useState({});
-  const [banner, setBanner] = React.useState(null);
-  const [status, setStatus] = React.useState("idle");
-  const [attempts, setAttempts] = React.useState(0);
-  const [locked, setLocked] = React.useState(false);
+  const [fieldErrors, setFieldErrors] = React.useState<FieldErrors>({});
+  const [banner, setBanner] = React.useState<Banner>(null);
+  const [status, setStatus] = React.useState<"idle" | "submitting" | "success">("idle");
   const [helpOpen, setHelpOpen] = React.useState(false);
   const [noticeOpen, setNoticeOpen] = React.useState(true);
-  const [service, setService] = React.useState("operational");
-  const [checkCount, setCheckCount] = React.useState(0);
 
-  const timers = React.useRef([]);
   const busy = React.useRef(false);
-  const emailRef = React.useRef(null);
-  const passwordRef = React.useRef(null);
-
-  React.useEffect(() => {
-    return () => {
-      timers.current.forEach((t) => clearTimeout(t));
-      timers.current = [];
-    };
-  }, []);
-
-  const later = (fn, ms) => {
-    const id = setTimeout(fn, ms);
-    timers.current.push(id);
-    return id;
-  };
+  const emailRef = React.useRef<HTMLInputElement>(null);
+  const passwordRef = React.useRef<HTMLInputElement>(null);
 
   const line = hexToRgba(brand.neutralColor, 0.18);
   const lineStrong = hexToRgba(brand.neutralColor, 0.3);
   const muted = hexToRgba(brand.neutralColor, 0.95);
   const heading = { fontFamily: brand.fontHeading };
-  const num = { fontVariantNumeric: "tabular-nums" };
   const panel = {
     borderColor: line,
     borderRadius: brand.radius,
@@ -105,14 +86,14 @@ export default function Screen() {
 
   const busyNow = status === "submitting";
   const done = status === "success";
-  const disabled = busyNow || done || locked;
+  const disabled = busyNow || done;
 
-  const submit = (event) => {
-    if (event && typeof event.preventDefault === "function") event.preventDefault();
+  const submit = async (event?: React.FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
     if (busy.current || disabled) return;
 
     const trimmed = email.trim();
-    const errors = {};
+    const errors: FieldErrors = {};
     if (!trimmed) {
       errors.email = "Enter the email address you signed up with.";
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
@@ -123,10 +104,8 @@ export default function Screen() {
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) {
       setBanner(null);
-      later(() => {
-        if (errors.email && emailRef.current) emailRef.current.focus();
-        else if (errors.password && passwordRef.current) passwordRef.current.focus();
-      }, 0);
+      if (errors.email) emailRef.current?.focus();
+      else if (errors.password) passwordRef.current?.focus();
       return;
     }
 
@@ -134,57 +113,30 @@ export default function Screen() {
     setBanner(null);
     setStatus("submitting");
 
-    later(() => {
+    try {
+      const user = await login(trimmed, password);
       busy.current = false;
-
-      if (service === "degraded") {
-        setStatus("idle");
-        setBanner({ kind: "service" });
-        return;
-      }
-
-      if (password.length < 8) {
-        const next = attempts + 1;
-        setAttempts(next);
-        setStatus("idle");
-        if (next >= MAX_ATTEMPTS) {
-          setLocked(true);
-          setHelpOpen(true);
-          setBanner({ kind: "locked" });
-        } else {
-          setBanner({ kind: "credentials", count: next });
-        }
-        return;
-      }
-
-      setAttempts(0);
+      setUser(user);
       setStatus("success");
-      later(() => navigate(REDIRECT_TARGET.route), 1150);
-    }, 950);
+      // No simulated delay: navigate as soon as the session is established.
+      navigate(REDIRECT_TARGET.route);
+    } catch (err) {
+      busy.current = false;
+      setStatus("idle");
+      if (err instanceof ApiError && err.status === 401) {
+        const { message } = parseAuthError(err);
+        setBanner({ kind: "credentials", message });
+      } else {
+        setBanner({
+          kind: "service",
+          message:
+            "This isn’t your details — the session service didn’t answer in time. What you typed is still here, so nothing needs retyping.",
+        });
+      }
+    }
   };
 
-  const recheckService = () => {
-    if (service === "checking") return;
-    setService("checking");
-    later(() => {
-      setService(checkCount % 2 === 0 ? "degraded" : "operational");
-      setCheckCount((c) => c + 1);
-    }, 800);
-  };
-
-  const retryAfterOutage = () => {
-    setService("operational");
-    setBanner(null);
-    later(() => submit(), 60);
-  };
-
-  const emailDescribedBy = [
-    "email-hint",
-    fieldErrors.email ? "email-error" : null,
-  ]
-    .filter(Boolean)
-    .join(" ");
-
+  const emailDescribedBy = fieldErrors.email ? "email-error" : undefined;
   const passwordDescribedBy = [
     capsLock ? "caps-note" : null,
     fieldErrors.password ? "password-error" : null,
@@ -192,24 +144,14 @@ export default function Screen() {
     .filter(Boolean)
     .join(" ");
 
-  const serviceLabel =
-    service === "checking"
-      ? "Checking"
-      : service === "degraded"
-      ? "Slower than usual"
-      : "Operational";
-
-  const serviceTint =
-    service === "degraded"
-      ? hexToRgba(brand.neutralColor, 0.1)
-      : hexToRgba(brand.accentColor, 0.12);
-
-  const serviceInk = service === "degraded" ? brand.neutralColor : "#0A6B4A";
-
   return (
     <div
       className="w-full min-h-full"
-      style={{ backgroundColor: brand.backgroundColor, fontFamily: brand.fontBody, color: brand.neutralColor }}
+      style={{
+        backgroundColor: brand.backgroundColor,
+        fontFamily: brand.fontBody,
+        color: brand.neutralColor,
+      }}
     >
       <style>{`
         @keyframes lgRise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -240,7 +182,8 @@ export default function Screen() {
             Log in
           </h1>
           <p className="mt-3 text-base leading-relaxed" style={{ color: muted }}>
-            Your documents and saved chats open only for this account. Sign in to pick up where you left off.
+            Your documents and saved chats open only for this account. Sign in to pick up where you
+            left off.
           </p>
         </header>
 
@@ -266,8 +209,8 @@ export default function Screen() {
                     Your session expired, so we stopped at the door
                   </p>
                   <p className="mt-1 text-sm leading-relaxed" style={{ color: muted }}>
-                    You were heading to the {REDIRECT_TARGET.label}. Log in and we’ll take you straight there — nothing
-                    was lost.
+                    You were heading to the {REDIRECT_TARGET.label}. Log in and we’ll take you
+                    straight there — nothing was lost.
                   </p>
                 </div>
                 <button
@@ -301,7 +244,11 @@ export default function Screen() {
               ) : null}
 
               <div className="p-6 sm:p-8">
-                <h2 id="signin-heading" className="text-lg font-semibold" style={{ ...heading, color: "#121926" }}>
+                <h2
+                  id="signin-heading"
+                  className="text-lg font-semibold"
+                  style={{ ...heading, color: "#121926" }}
+                >
                   Email and password
                 </h2>
                 <p className="mt-1.5 text-sm" style={{ color: muted }}>
@@ -329,7 +276,9 @@ export default function Screen() {
                         </p>
                         <p className="mt-1 text-sm" style={{ color: muted }}>
                           Welcome back, {email.trim()}. Your session cookie is set{" "}
-                          {remember ? "for 30 days on this browser." : "until you close this browser."}
+                          {remember
+                            ? "for 30 days on this browser."
+                            : "until you close this browser."}
                         </p>
                       </div>
                     </div>
@@ -353,47 +302,12 @@ export default function Screen() {
                         />
                         <div>
                           <p className="text-sm font-semibold" style={{ color: "#1A2433" }}>
-                            That email or password is incorrect
+                            {banner.message}
                           </p>
                           <p className="mt-1 text-sm leading-relaxed" style={{ color: muted }}>
-                            We don’t say which of the two it was — that’s deliberate, so nobody can use this page to
-                            find out whether an account exists. Check for Caps Lock or a stray space, then try again.
-                          </p>
-                          <p className="mt-2 text-sm font-medium" style={{ ...num, color: "#1A2433" }}>
-                            Attempt {banner.count} of {MAX_ATTEMPTS} before this account locks.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {banner && banner.kind === "locked" ? (
-                    <div
-                      role="alert"
-                      className="lg-rise mt-5 border px-4 py-3.5"
-                      style={{
-                        ...panel,
-                        borderColor: lineStrong,
-                        backgroundColor: hexToRgba(brand.neutralColor, 0.08),
-                      }}
-                    >
-                      <div className="flex items-start gap-3">
-                        <Icons.AlertCircle
-                          className="mt-0.5 h-4 w-4 shrink-0"
-                          aria-hidden="true"
-                          style={{ color: "#1A2433" }}
-                        />
-                        <div>
-                          <p className="text-sm font-semibold" style={{ color: "#1A2433" }}>
-                            Locked after {MAX_ATTEMPTS} failed attempts
-                          </p>
-                          <p className="mt-1 text-sm leading-relaxed" style={{ color: muted }}>
-                            Sign-in for {email.trim()} is paused to protect the documents behind it. Only an operator
-                            can lift it: email{" "}
-                            <span className="font-medium" style={{ color: "#1A2433" }}>
-                              {SUPPORT_EMAIL}
-                            </span>{" "}
-                            from this address and we’ll verify you and unlock it. Your password box is untouched below.
+                            We don’t say which of the two it was — that’s deliberate, so nobody can
+                            use this page to find out whether an account exists. Check for Caps Lock
+                            or a stray space, then try again.
                           </p>
                         </div>
                       </div>
@@ -421,12 +335,11 @@ export default function Screen() {
                             We couldn’t reach the sign-in service
                           </p>
                           <p className="mt-1 text-sm leading-relaxed" style={{ color: muted }}>
-                            This isn’t your details — the session service didn’t answer in time. What you typed is
-                            still here, so nothing needs retyping.
+                            {banner.message}
                           </p>
                           <button
                             type="button"
-                            onClick={retryAfterOutage}
+                            onClick={() => submit()}
                             className="lg-soft mt-3 inline-flex items-center gap-1.5 rounded border px-3 py-1.5 text-sm font-medium hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
                             style={{
                               borderColor: lineStrong,
@@ -456,7 +369,7 @@ export default function Screen() {
                             setEmail("");
                             setFieldErrors({});
                             setBanner(null);
-                            if (emailRef.current) emailRef.current.focus();
+                            emailRef.current?.focus();
                           }}
                           className="lg-soft rounded text-sm font-medium underline underline-offset-2 hover:opacity-75 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
                           style={{ color: brand.primaryColor, outlineColor: brand.primaryColor }}
@@ -476,18 +389,16 @@ export default function Screen() {
                         value={email}
                         disabled={disabled}
                         aria-invalid={fieldErrors.email ? "true" : undefined}
-                        aria-describedby={emailDescribedBy || undefined}
+                        aria-describedby={emailDescribedBy}
                         onChange={(e) => {
                           setEmail(e.target.value);
-                          if (fieldErrors.email) setFieldErrors((f) => ({ ...f, email: undefined }));
+                          if (fieldErrors.email)
+                            setFieldErrors((f) => ({ ...f, email: undefined }));
                         }}
                         placeholder="you@company.com"
                         className="w-full"
                       />
                     </div>
-                    <p id="email-hint" className="mt-2 text-xs" style={{ ...num, color: hexToRgba(brand.neutralColor, 0.85) }}>
-                      Last signed in from this browser on {RECENT_SESSION.lastSignIn}.
-                    </p>
                     {fieldErrors.email ? (
                       <p
                         id="email-error"
@@ -526,20 +437,25 @@ export default function Screen() {
                         aria-invalid={fieldErrors.password ? "true" : undefined}
                         aria-describedby={passwordDescribedBy || undefined}
                         onKeyUp={(e) => {
-                          if (e && typeof e.getModifierState === "function") {
+                          if (typeof e.getModifierState === "function") {
                             setCapsLock(e.getModifierState("CapsLock"));
                           }
                         }}
                         onChange={(e) => {
                           setPassword(e.target.value);
-                          if (fieldErrors.password) setFieldErrors((f) => ({ ...f, password: undefined }));
+                          if (fieldErrors.password)
+                            setFieldErrors((f) => ({ ...f, password: undefined }));
                         }}
                         placeholder="At least 8 characters"
                         className="w-full"
                       />
                     </div>
                     {capsLock ? (
-                      <p id="caps-note" className="lg-rise mt-2 text-xs font-medium" style={{ color: "#1A2433" }}>
+                      <p
+                        id="caps-note"
+                        className="lg-rise mt-2 text-xs font-medium"
+                        style={{ color: "#1A2433" }}
+                      >
                         Caps Lock is on.
                       </p>
                     ) : null}
@@ -562,14 +478,8 @@ export default function Screen() {
                         id="login-remember"
                         checked={remember}
                         disabled={disabled}
-                        onChange={(e) => {
-                          const next =
-                            typeof e === "boolean"
-                              ? e
-                              : e && e.target
-                              ? e.target.checked
-                              : !remember;
-                          setRemember(next);
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                          setRemember(e.target.checked);
                         }}
                       />
                       <Label htmlFor="login-remember" className="text-sm font-normal">
@@ -581,11 +491,10 @@ export default function Screen() {
                   <div className="pt-1">
                     <Button
                       type="submit"
-                      onClick={submit}
                       disabled={disabled}
                       className="lg-soft w-full justify-center py-3 text-base font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
                       style={{
-                        backgroundColor: locked ? hexToRgba(brand.neutralColor, 0.35) : brand.primaryColor,
+                        backgroundColor: brand.primaryColor,
                         color: "white",
                         borderRadius: brand.radius,
                         opacity: busyNow ? 0.85 : 1,
@@ -593,15 +502,12 @@ export default function Screen() {
                         cursor: disabled ? "not-allowed" : "pointer",
                       }}
                     >
-                      {locked
-                        ? "Sign-in locked"
-                        : done
-                        ? "Signed in"
-                        : busyNow
-                        ? "Checking your details…"
-                        : "Log in"}
+                      {done ? "Signed in" : busyNow ? "Checking your details…" : "Log in"}
                     </Button>
-                    <p className="mt-3 text-center text-xs" style={{ color: hexToRgba(brand.neutralColor, 0.85) }}>
+                    <p
+                      className="mt-3 text-center text-xs"
+                      style={{ color: hexToRgba(brand.neutralColor, 0.85) }}
+                    >
                       Passwords are stored only as a salted hash — we never see yours.
                     </p>
                   </div>
@@ -642,14 +548,18 @@ export default function Screen() {
                       }}
                     >
                       <p className="text-sm leading-relaxed" style={{ color: muted }}>
-                        Self-serve reset isn’t built yet — we’d rather tell you than show a link that quietly does
-                        nothing. Email{" "}
+                        Self-serve reset isn’t built yet — we’d rather tell you than show a link
+                        that quietly does nothing. Email{" "}
                         <span className="font-semibold" style={{ color: "#1A2433" }}>
                           {SUPPORT_EMAIL}
                         </span>{" "}
-                        from the address on the account and a person will verify you and set a new password.
+                        from the address on the account and a person will verify you and set a new
+                        password.
                       </p>
-                      <p className="mt-2 text-sm" style={{ ...num, color: hexToRgba(brand.neutralColor, 0.9) }}>
+                      <p
+                        className="mt-2 text-sm"
+                        style={{ color: hexToRgba(brand.neutralColor, 0.9) }}
+                      >
                         Answered Mon–Fri, 09:00–17:30 UK, usually within one working day.
                       </p>
                     </div>
@@ -684,10 +594,18 @@ export default function Screen() {
             </section>
           </main>
 
-          {/* ---------- Secondary: reassurance and service status ---------- */}
+          {/* ---------- Secondary: reassurance ---------- */}
           <aside className="space-y-5">
-            <section className="border bg-white p-5 sm:p-6" style={panel} aria-labelledby="assurance-heading">
-              <h2 id="assurance-heading" className="text-sm font-semibold" style={{ ...heading, color: "#121926" }}>
+            <section
+              className="border bg-white p-5 sm:p-6"
+              style={panel}
+              aria-labelledby="assurance-heading"
+            >
+              <h2
+                id="assurance-heading"
+                className="text-sm font-semibold"
+                style={{ ...heading, color: "#121926" }}
+              >
                 What’s behind the login
               </h2>
               <ul className="mt-4 space-y-4">
@@ -697,7 +615,11 @@ export default function Screen() {
                       className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
                       style={{ backgroundColor: hexToRgba(brand.accentColor, 0.14) }}
                     >
-                      <Icons.Check className="h-3 w-3" aria-hidden="true" style={{ color: "#0A6B4A" }} />
+                      <Icons.Check
+                        className="h-3 w-3"
+                        aria-hidden="true"
+                        style={{ color: "#0A6B4A" }}
+                      />
                     </span>
                     <div>
                       <p className="text-sm font-semibold" style={{ color: "#1A2433" }}>
@@ -722,66 +644,16 @@ export default function Screen() {
                 </button>
               </div>
             </section>
-
-            <section className="border bg-white p-5 sm:p-6" style={panel} aria-labelledby="service-heading">
-              <div className="flex items-start justify-between gap-3">
-                <h2 id="service-heading" className="text-sm font-semibold" style={{ ...heading, color: "#121926" }}>
-                  Sign-in service
-                </h2>
-                <span
-                  className="lg-pop inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold"
-                  style={{
-                    backgroundColor: serviceTint,
-                    color: serviceInk,
-                    borderRadius: brand.radius,
-                  }}
-                >
-                  {service === "degraded" ? (
-                    <Icons.AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                  ) : service === "checking" ? (
-                    <Icons.Clock className="h-3.5 w-3.5" aria-hidden="true" />
-                  ) : (
-                    <Icons.CheckCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                  )}
-                  {serviceLabel}
-                </span>
-              </div>
-
-              <p className="mt-3 text-sm leading-relaxed" style={{ color: muted }}>
-                {service === "degraded"
-                  ? "Sessions are taking a few seconds longer to issue than usual. Password checks themselves are unaffected — a sign-in may need a second go."
-                  : service === "checking"
-                  ? "Asking the session service how it’s doing…"
-                  : "Logins, uploads and chat are all running normally."}
-              </p>
-
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <p className="text-xs" style={{ ...num, color: hexToRgba(brand.neutralColor, 0.85) }}>
-                  Checked {CHECK_TIMES[Math.min(checkCount, CHECK_TIMES.length - 1)]} today
-                </p>
-                <button
-                  type="button"
-                  onClick={recheckService}
-                  disabled={service === "checking"}
-                  className="lg-soft rounded border px-3 py-1.5 text-xs font-semibold hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-                  style={{
-                    borderColor: lineStrong,
-                    borderRadius: brand.radius,
-                    color: brand.primaryColor,
-                    outlineColor: brand.primaryColor,
-                    opacity: service === "checking" ? 0.6 : 1,
-                  }}
-                >
-                  {service === "checking" ? "Checking…" : "Check again"}
-                </button>
-              </div>
-            </section>
           </aside>
         </div>
 
-        <p className="mt-10 max-w-2xl text-xs leading-relaxed" style={{ color: hexToRgba(brand.neutralColor, 0.8) }}>
-          Answers are generated by Google Gemini on a paid API tier, so your documents and questions are not used to
-          train models. Content you delete is removed along with its text, embeddings and stored file.
+        <p
+          className="mt-10 max-w-2xl text-xs leading-relaxed"
+          style={{ color: hexToRgba(brand.neutralColor, 0.8) }}
+        >
+          Answers are generated by Google Gemini on a paid API tier, so your documents and questions
+          are not used to train models. Content you delete is removed along with its text,
+          embeddings and stored file.
         </p>
       </div>
     </div>
