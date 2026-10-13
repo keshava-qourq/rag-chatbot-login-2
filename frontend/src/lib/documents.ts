@@ -17,6 +17,7 @@ export type Document = {
   created_at: string;
   size_bytes: number;
   status: DocumentStatus;
+  failure_reason?: string | null;
 };
 
 export async function listDocuments(): Promise<Document[]> {
@@ -61,10 +62,31 @@ export async function uploadDocuments(files: File[]): Promise<Document[]> {
   return (await response.json()) as Document[];
 }
 
+/**
+ * Permanently removes a document. The server responds `204 No Content` on
+ * success -- `apiFetch` resolves that as `undefined`, which is all callers
+ * need: the row's removal from the list is this function's only visible
+ * effect.
+ */
+export async function deleteDocument(id: string): Promise<void> {
+  await apiFetch<void>(`/documents/${id}`, { method: "DELETE" });
+}
+
+/**
+ * Re-queues a failed document for ingestion. The server clears
+ * `failure_reason` and flips `status` back to `queued` before enqueuing the
+ * job, and returns the updated document so the caller does not need a
+ * follow-up fetch to show the new state.
+ */
+export async function retryDocument(id: string): Promise<Document> {
+  return apiFetch<Document>(`/documents/${id}/retry`, { method: "POST" });
+}
+
 export type DocumentStatusEvent = {
   id: string;
   status: DocumentStatus;
   filename: string;
+  failure_reason?: string | null;
 };
 
 /**

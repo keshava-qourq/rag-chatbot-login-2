@@ -52,10 +52,17 @@ class AskQuestionRequest(BaseModel):
 
 
 class DocumentResponse(BaseModel):
-    """What POST /documents and GET /documents return for a document."""
+    """What POST /documents, GET /documents and POST /documents/{id}/retry
+    return for a document.
+
+    `failure_reason` is `None` for every status except `failed`, where it is
+    a short plain-language message (see `app.ingestion._classify_failure`)
+    rather than a raw exception string.
+    """
 
     id: str
     filename: str
     created_at: datetime
     size_bytes: int
     status: str
+    failure_reason: str | None = None

@@ -263,4 +263,192 @@ describe("Documents library", () => {
     unmount();
     expect(source.close).toHaveBeenCalledTimes(1);
   });
+
+  it("AC-024: a failed document shows its failure_reason next to the Failed badge", async () => {
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([
+      {
+        id: "doc-failed",
+        filename: "broken.pdf",
+        created_at: "2026-01-01T00:00:00Z",
+        size_bytes: 1024,
+        status: "failed",
+        failure_reason: "Could not extract text from this file.",
+      },
+    ]);
+
+    renderDocuments();
+
+    const heading = await screen.findByText("broken.pdf");
+    const row = heading.closest("li") as HTMLElement;
+    expect(within(row).getByText(/failed/i)).toBeInTheDocument();
+    expect(
+      within(row).getByText(/could not extract text from this file/i),
+    ).toBeInTheDocument();
+  });
+
+  it("AC-025: Retry calls POST /documents/{id}/retry and updates the row to Queued, clearing the failure reason", async () => {
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([
+      {
+        id: "doc-failed",
+        filename: "broken.pdf",
+        created_at: "2026-01-01T00:00:00Z",
+        size_bytes: 1024,
+        status: "failed",
+        failure_reason: "Could not extract text from this file.",
+      },
+    ]);
+    const retrySpy = vi.spyOn(documentsApi, "retryDocument").mockResolvedValue({
+      id: "doc-failed",
+      filename: "broken.pdf",
+      created_at: "2026-01-01T00:00:00Z",
+      size_bytes: 1024,
+      status: "queued",
+      failure_reason: null,
+    });
+
+    renderDocuments();
+    const heading = await screen.findByText("broken.pdf");
+    const row = heading.closest("li") as HTMLElement;
+
+    fireEvent.click(within(row).getByRole("button", { name: /retry/i }));
+
+    await waitFor(() => expect(within(row).getByText(/queued/i)).toBeInTheDocument());
+    expect(retrySpy).toHaveBeenCalledWith("doc-failed");
+    expect(
+      within(row).queryByText(/could not extract text from this file/i),
+    ).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
+  });
+
+  it("surfaces an inline, dismissible alert and leaves the row intact when retry fails", async () => {
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([
+      {
+        id: "doc-failed",
+        filename: "broken.pdf",
+        created_at: "2026-01-01T00:00:00Z",
+        size_bytes: 1024,
+        status: "failed",
+        failure_reason: "Could not extract text from this file.",
+      },
+    ]);
+    vi.spyOn(documentsApi, "retryDocument").mockRejectedValue(
+      new ApiError(500, { message: "Retry failed." }, "Retry failed."),
+    );
+
+    renderDocuments();
+    const heading = await screen.findByText("broken.pdf");
+    const row = heading.closest("li") as HTMLElement;
+
+    fireEvent.click(within(row).getByRole("button", { name: /retry/i }));
+
+    expect(await screen.findByText("Retry failed.")).toBeInTheDocument();
+    expect(within(row).getByText(/failed/i)).toBeInTheDocument();
+    expect(
+      within(row).getByText(/could not extract text from this file/i),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /dismiss action error/i }));
+    expect(screen.queryByText("Retry failed.")).not.toBeInTheDocument();
+  });
+
+  it("AC-017/AC-019: confirming delete on a queued document calls DELETE /documents/{id} and removes the row", async () => {
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([
+      {
+        id: "doc-1",
+        filename: "report.pdf",
+        created_at: "2026-01-01T00:00:00Z",
+        size_bytes: 1024,
+        status: "queued",
+      },
+    ]);
+    const deleteSpy = vi.spyOn(documentsApi, "deleteDocument").mockResolvedValue(undefined);
+
+    renderDocuments();
+    const heading = await screen.findByText("report.pdf");
+    const row = heading.closest("li") as HTMLElement;
+
+    fireEvent.click(within(row).getByRole("button", { name: /delete report\.pdf/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/irreversible/i)).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^delete$/i }));
+
+    await waitFor(() => expect(screen.queryByText("report.pdf")).not.toBeInTheDocument());
+    expect(deleteSpy).toHaveBeenCalledWith("doc-1");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("AC-017: cancelling the delete confirmation leaves the row unchanged", async () => {
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([
+      {
+        id: "doc-1",
+        filename: "report.pdf",
+        created_at: "2026-01-01T00:00:00Z",
+        size_bytes: 1024,
+        status: "queued",
+      },
+    ]);
+    const deleteSpy = vi.spyOn(documentsApi, "deleteDocument");
+
+    renderDocuments();
+    const heading = await screen.findByText("report.pdf");
+    const row = heading.closest("li") as HTMLElement;
+
+    fireEvent.click(within(row).getByRole("button", { name: /delete report\.pdf/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /cancel/i }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText("report.pdf")).toBeInTheDocument();
+    expect(deleteSpy).not.toHaveBeenCalled();
+  });
+
+  it("surfaces an inline, dismissible alert and leaves the row intact when delete fails", async () => {
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([
+      {
+        id: "doc-1",
+        filename: "report.pdf",
+        created_at: "2026-01-01T00:00:00Z",
+        size_bytes: 1024,
+        status: "queued",
+      },
+    ]);
+    vi.spyOn(documentsApi, "deleteDocument").mockRejectedValue(
+      new ApiError(500, { message: "Delete failed." }, "Delete failed."),
+    );
+
+    renderDocuments();
+    const heading = await screen.findByText("report.pdf");
+    const row = heading.closest("li") as HTMLElement;
+
+    fireEvent.click(within(row).getByRole("button", { name: /delete report\.pdf/i }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /^delete$/i }));
+
+    expect(await screen.findByText("Delete failed.")).toBeInTheDocument();
+    expect(screen.getByText("report.pdf")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /dismiss action error/i }));
+    expect(screen.queryByText("Delete failed.")).not.toBeInTheDocument();
+  });
+
+  it("AC-019: a processing document also offers Delete", async () => {
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([
+      {
+        id: "doc-1",
+        filename: "report.pdf",
+        created_at: "2026-01-01T00:00:00Z",
+        size_bytes: 1024,
+        status: "processing",
+      },
+    ]);
+
+    renderDocuments();
+    const heading = await screen.findByText("report.pdf");
+    const row = heading.closest("li") as HTMLElement;
+
+    expect(within(row).getByRole("button", { name: /delete report\.pdf/i })).toBeInTheDocument();
+  });
 });

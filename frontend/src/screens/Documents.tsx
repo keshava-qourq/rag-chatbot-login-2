@@ -5,7 +5,9 @@ import { ApiError } from "@/lib/api";
 import {
   type Document,
   type DocumentStatus,
+  deleteDocument,
   listDocuments,
+  retryDocument,
   subscribeToDocumentEvents,
   uploadDocuments,
 } from "@/lib/documents";
@@ -57,12 +59,18 @@ function StatusBadge({ status }: { status: DocumentStatus }) {
   return <Badge variant={STATUS_VARIANT[status]}>{STATUS_LABEL[status]}</Badge>;
 }
 
+function actionErrorMessage(err: unknown, fallback: string): string {
+  return err instanceof ApiError ? err.message : fallback;
+}
+
 export default function Documents() {
   const [screenState, setScreenState] = React.useState<ScreenState>("loading");
   const [documents, setDocuments] = React.useState<Document[]>([]);
   const [uploadError, setUploadError] = React.useState<string | null>(null);
+  const [actionError, setActionError] = React.useState<string | null>(null);
   const [uploading, setUploading] = React.useState(false);
   const [isDragging, setIsDragging] = React.useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
@@ -86,7 +94,15 @@ export default function Documents() {
     const unsubscribe = subscribeToDocumentEvents((event) => {
       setDocuments((prev) =>
         prev.map((doc) =>
-          doc.id === event.id ? { ...doc, status: event.status, filename: event.filename } : doc,
+          doc.id === event.id
+            ? {
+                ...doc,
+                status: event.status,
+                filename: event.filename,
+                failure_reason:
+                  event.failure_reason !== undefined ? event.failure_reason : doc.failure_reason,
+              }
+            : doc,
         ),
       );
     });
@@ -134,6 +150,33 @@ export default function Documents() {
     event.preventDefault();
     setIsDragging(false);
   };
+
+  const handleConfirmDelete = React.useCallback(async () => {
+    const id = confirmDeleteId;
+    if (!id) return;
+    setConfirmDeleteId(null);
+    try {
+      await deleteDocument(id);
+      setDocuments((prev) => prev.filter((doc) => doc.id !== id));
+    } catch (err) {
+      setActionError(actionErrorMessage(err, "Failed to delete document. Please try again."));
+    }
+  }, [confirmDeleteId]);
+
+  const handleRetry = React.useCallback(async (id: string) => {
+    try {
+      const updated = await retryDocument(id);
+      setDocuments((prev) =>
+        prev.map((doc) =>
+          doc.id === id
+            ? { ...doc, status: updated.status, failure_reason: updated.failure_reason ?? null }
+            : doc,
+        ),
+      );
+    } catch (err) {
+      setActionError(actionErrorMessage(err, "Failed to retry document. Please try again."));
+    }
+  }, []);
 
   return (
     <div className="mx-auto max-w-3xl p-8">
@@ -206,6 +249,24 @@ export default function Documents() {
         </div>
       ) : null}
 
+      {actionError ? (
+        <div
+          role="alert"
+          className="mb-6 flex items-start gap-2 rounded-[var(--brand-radius)] border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+        >
+          <AlertCircle size={16} className="mt-0.5 shrink-0" />
+          <p className="flex-1">{actionError}</p>
+          <button
+            type="button"
+            aria-label="Dismiss action error"
+            onClick={() => setActionError(null)}
+            className="shrink-0 text-red-700 hover:text-red-900"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      ) : null}
+
       {screenState === "loading" ? (
         <p className="text-sm text-[var(--brand-fg-muted)]">{"Loading your documents…"}</p>
       ) : null}
@@ -248,12 +309,72 @@ export default function Documents() {
                   <p className="text-xs text-[var(--brand-fg-muted)]">
                     {formatDate(doc.created_at)} · {formatSize(doc.size_bytes)}
                   </p>
+                  {doc.status === "failed" && doc.failure_reason ? (
+                    <p className="mt-1 text-xs text-red-700">{doc.failure_reason}</p>
+                  ) : null}
                 </div>
               </div>
-              <StatusBadge status={doc.status} />
+              <div className="flex shrink-0 items-center gap-2">
+                <StatusBadge status={doc.status} />
+                {doc.status === "failed" ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void handleRetry(doc.id)}
+                  >
+                    {"Retry"}
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  aria-label={`Delete ${doc.filename}`}
+                  onClick={() => setConfirmDeleteId(doc.id)}
+                >
+                  {"Delete"}
+                </Button>
+              </div>
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {confirmDeleteId ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-document-dialog-title"
+            className="w-full max-w-sm rounded-[var(--brand-radius)] border border-slate-200 bg-white p-6 shadow-lg"
+          >
+            <h2 id="delete-document-dialog-title" className="text-base font-semibold text-slate-900">
+              {"Delete this document?"}
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              {"This action is irreversible. The document and its contents cannot be recovered."}
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setConfirmDeleteId(null)}
+              >
+                {"Cancel"}
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
+                size="sm"
+                onClick={() => void handleConfirmDelete()}
+              >
+                {"Delete"}
+              </Button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </div>
   );

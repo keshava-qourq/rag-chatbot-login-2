@@ -16,11 +16,16 @@ a document id it:
 4. Moves the document to `ready` in a final, separate commit.
 
 Any failure in steps 2-4 moves the document to `failed` with
-`failure_reason` set, in its own commit, so a crash mid-embed never leaves
-a document stuck in `processing`.
+`failure_reason` set to a short plain-language message (see
+`_classify_failure`) rather than a raw exception string, in its own commit,
+so a crash mid-embed never leaves a document stuck in `processing`.
 
 `app.gemini_client` is the only module this codebase lets talk to a model
 provider; this module calls its `embed` function and nothing else.
+
+Also exposes `get_ready_chunks`, the retrieval helper that restricts a
+user's chunks to documents whose status is `ready` -- so a deleted, queued,
+processing or failed document never contributes a chunk to retrieval.
 """
 
 from __future__ import annotations
@@ -63,12 +68,20 @@ _MD_HEADER_RE = re.compile(r"^#{1,6}\s+.*$", re.MULTILINE)
 # are JSON-encoded there and left as real lists everywhere else.
 _IS_SQLITE = engine.dialect.name == "sqlite"
 
+# Plain-language messages `_classify_failure` maps a failure onto, per
+# AC-024 -- a user sees one of these, never a raw exception string.
+_NO_TEXT_MESSAGE = "No readable text found in this file."
+_PROVIDER_UNAVAILABLE_MESSAGE = "Processing service unavailable - try again."
+_STORAGE_UNAVAILABLE_MESSAGE = "Could not retrieve the file - try again."
+_GENERIC_MESSAGE = "Something went wrong while processing this file - try again."
+
 
 class IngestionError(RuntimeError):
     """Raised for an extraction, embedding or storage failure during ingestion.
 
     Caught by `process_document`'s own handler, which turns it (and any
-    other exception from this module) into `Document.failure_reason`.
+    other exception from this module) into `Document.failure_reason` via
+    `_classify_failure`.
     """
 
 
@@ -240,6 +253,11 @@ def _load_and_mark_processing(session: DBSession, document_id: str) -> Document 
 
     document = session.get(Document, doc_uuid)
     if document is None:
+        # Either the id never existed, or the document was deleted after
+        # being enqueued (see `app.routers.documents.delete_document`): both
+        # cases are a clean no-op rather than an error, which is what makes
+        # delete a true cancel of any pending or racing ingestion job
+        # (AC-019).
         logger.error("document %s not found for ingestion", document_id)
         return None
 
@@ -251,7 +269,32 @@ def _load_and_mark_processing(session: DBSession, document_id: str) -> Document 
     return document
 
 
-def _mark_failed(session: DBSession, document_id: str, reason: str) -> None:
+def _classify_failure(exc: Exception) -> str:
+    """A short, plain-language message for `Document.failure_reason`.
+
+    Maps the internal `IngestionError` messages raised throughout this
+    module (and the generic errors they wrap) onto one of a small, stable
+    set of user-facing strings -- never the raw exception text (AC-024).
+    """
+    message = str(exc).lower()
+
+    if "no extractable text" in message:
+        return _NO_TEXT_MESSAGE
+    if (
+        "failed to read pdf" in message
+        or "failed to extract pdf page" in message
+        or "failed to read docx" in message
+        or "unsupported mime type" in message
+    ):
+        return _NO_TEXT_MESSAGE
+    if "failed to embed" in message or "embedding returned" in message:
+        return _PROVIDER_UNAVAILABLE_MESSAGE
+    if "failed to fetch" in message or "s3_bucket is not configured" in message:
+        return _STORAGE_UNAVAILABLE_MESSAGE
+    return _GENERIC_MESSAGE
+
+
+def _mark_failed(session: DBSession, document_id: str, exc: Exception) -> None:
     session.rollback()
     try:
         doc_uuid = uuid.UUID(document_id)
@@ -261,7 +304,7 @@ def _mark_failed(session: DBSession, document_id: str, reason: str) -> None:
     if document is None:
         return
     document.status = "failed"
-    document.failure_reason = reason[:2000]
+    document.failure_reason = _classify_failure(exc)
     session.add(document)
     session.commit()
 
@@ -291,8 +334,10 @@ def _process_document_sync(document_id: str) -> None:
         try:
             _ingest(session, document)
         except Exception as exc:
+            # The raw exception is logged (for operators) but never stored:
+            # `_mark_failed` maps it onto a short plain-language message.
             logger.exception("ingestion failed for document %s", document_id)
-            _mark_failed(session, document_id, str(exc))
+            _mark_failed(session, document_id, exc)
     finally:
         session.close()
 
@@ -305,6 +350,11 @@ async def process_document(ctx: dict, document_id: str) -> None:
     `app.routers.documents.INGESTION_JOB_NAME`) resolves to it. All of the
     actual work is synchronous (DB, S3, Gemini), so it runs on a worker
     thread rather than blocking arq's event loop.
+
+    A document deleted after being enqueued (or while this job is running)
+    is handled by `_load_and_mark_processing`'s guard: this function becomes
+    a no-op rather than resurrecting or half-processing a purged document
+    (AC-019).
     """
     await asyncio.to_thread(_process_document_sync, document_id)
 
@@ -313,8 +363,9 @@ def get_ready_chunks(session: DBSession, user_id: uuid.UUID) -> list[Chunk]:
     """Chunks for `user_id`, restricted to documents whose status is `ready`.
 
     Excludes chunks belonging to queued, processing or failed documents --
-    the retrieval helper AC-023 requires, so a half-ingested or failed
-    document's chunks are never surfaced to retrieval.
+    the retrieval helper AC-018/AC-023/AC-026 requires, so a deleted,
+    half-ingested or failed document's chunks are never surfaced to
+    retrieval.
     """
     stmt = (
         select(Chunk)
