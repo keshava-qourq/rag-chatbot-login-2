@@ -61,9 +61,7 @@ def test_signup_sets_an_httponly_secure_samesite_cookie() -> None:
 def test_signup_rejects_weak_password_with_field_specific_message() -> None:
     client = new_client()
 
-    response = client.post(
-        "/auth/signup", json={"email": unique_email(), "password": "weak"}
-    )
+    response = client.post("/auth/signup", json={"email": unique_email(), "password": "weak"})
 
     assert response.status_code == 422
     detail = response.json()["detail"]
@@ -126,9 +124,7 @@ def test_signup_never_logs_the_password(caplog: object) -> None:
     email = unique_email()
 
     with caplog.at_level(logging.DEBUG):  # type: ignore[attr-defined]
-        response = client.post(
-            "/auth/signup", json={"email": email, "password": STRONG_PASSWORD}
-        )
+        response = client.post("/auth/signup", json={"email": email, "password": STRONG_PASSWORD})
 
     assert response.status_code == 201
     assert STRONG_PASSWORD not in caplog.text  # type: ignore[attr-defined]
@@ -178,9 +174,7 @@ def test_login_with_correct_credentials_sets_cookie_and_returns_user() -> None:
     signup_client.post("/auth/signup", json={"email": email, "password": STRONG_PASSWORD})
 
     login_client = new_client()
-    response = login_client.post(
-        "/auth/login", json={"email": email, "password": STRONG_PASSWORD}
-    )
+    response = login_client.post("/auth/login", json={"email": email, "password": STRONG_PASSWORD})
 
     assert response.status_code == 200
     assert response.json()["email"] == email
@@ -201,9 +195,7 @@ def test_login_wrong_password_returns_generic_401() -> None:
     email = unique_email()
     signup_client.post("/auth/signup", json={"email": email, "password": STRONG_PASSWORD})
 
-    response = new_client().post(
-        "/auth/login", json={"email": email, "password": "WrongPass1"}
-    )
+    response = new_client().post("/auth/login", json={"email": email, "password": "WrongPass1"})
 
     assert response.status_code == 401
     assert response.json()["detail"] == "email or password is incorrect"
