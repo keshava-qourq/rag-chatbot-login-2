@@ -20,7 +20,15 @@ def test_health_reports_ok() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert set(body["services"]) == {"redis-queue", "redis", "object-storage"}
+    assert set(body["services"]) == {"redis-queue", "redis", "object-storage", "gemini"}
+
+
+def test_health_reflects_gemini_configuration_state() -> None:
+    """`/health` names the only configured model provider explicitly."""
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["services"]["gemini"] is True
 
 
 def test_the_openapi_document_builds() -> None:
