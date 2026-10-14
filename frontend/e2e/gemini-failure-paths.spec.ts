@@ -121,8 +121,7 @@ test.describe("Gemini outage: chat failure path", () => {
     // A provider-shaped failure string this test proves never reaches the
     // page -- the client only ever renders its own fixed copy, regardless
     // of what the SSE `error` event actually said.
-    const rawProviderMessage =
-      "google.genai.errors.ServerError: upstream 503 (request id a1b2c3)";
+    const rawProviderMessage = "google.genai.errors.ServerError: upstream 503 (request id a1b2c3)";
 
     const requestedQuestions: string[] = [];
     await page.route(/\/conversations\/c1\/messages$/, async (route) => {
@@ -176,9 +175,9 @@ test.describe("Gemini outage: chat failure path", () => {
       "When can we break the lease?",
     ]);
     // The error banner is gone once the retry succeeds.
-    await expect(page.getByRole("alert").filter({ hasText: /temporarily unavailable/i })).toHaveCount(
-      0,
-    );
+    await expect(
+      page.getByRole("alert").filter({ hasText: /temporarily unavailable/i }),
+    ).toHaveCount(0);
   });
 });
 
@@ -234,8 +233,6 @@ test.describe("Gemini outage: failed document in the library", () => {
     const row = page.locator("li", { has: heading });
 
     await expect(row.getByText(/failed/i)).toBeVisible();
-    await expect(
-      row.getByText("This document failed to process. Please try again."),
-    ).toBeVisible();
+    await expect(row.getByText("This document failed to process. Please try again.")).toBeVisible();
   });
 });
