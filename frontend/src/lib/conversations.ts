@@ -9,22 +9,27 @@
  * matching handler as each one arrives.
  *
  * The SSE contract (see `backend/app/routers/conversations.py`):
- *   - `token`     data: {"text": "<piece of the answer>"}
- *   - `citations` data: {"citations": [{"id","document_id","page","quoted_passage"}]}
- *                 sent once, after the last token, in the same order the
- *                 model was offered the excerpts -- so a citation's 1-based
- *                 position in this array is the `[[n]]` marker number the
- *                 answer text cites it by.
- *   - `done`      data: {} -- the turn is fully persisted server-side; this
- *                 client assembles the final `Message` itself from the
- *                 tokens and citations already received.
+ *   - `token`     data: {"token": "<piece of the answer>"}
+ *   - `citations` data: {"citations": [{"n","id","document_id","document",
+ *                 "page","quoted_passage"}]} -- sent once, after the last
+ *                 token. Each citation carries its own `[[n]]` marker
+ *                 number, so a marker resolves to its citation by that
+ *                 number, not by position in the array: a skipped or
+ *                 reordered marker still resolves correctly.
+ *   - `done`      data: {"message": {...}} -- the fully persisted
+ *                 assistant message, exactly as `GET /conversations/{id}`
+ *                 will return it on reload. This client hands it straight
+ *                 to `onDone` rather than re-assembling it from the tokens
+ *                 and citations it saw along the way.
  *   - `error`     data: {"message": "<human-readable failure>"}
  */
 import { API_BASE_URL, apiFetch } from "@/lib/api";
 
 export type Citation = {
   id: string;
+  n: number;
   document_id: string;
+  document?: string;
   page: number;
   quoted_passage: string;
 };
@@ -96,21 +101,20 @@ function fieldFromBody(body: unknown, field: string): string | undefined {
   return undefined;
 }
 
-function citationsFromBody(body: unknown): Citation[] | undefined {
-  if (!body || typeof body !== "object") return undefined;
-  const list = (body as Record<string, unknown>).citations;
-  return Array.isArray(list) ? (list as Citation[]) : undefined;
-}
-
-function randomMessageId(): string {
-  return `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+function objectFromBody(body: unknown, field: string): Record<string, unknown> | undefined {
+  if (body && typeof body === "object") {
+    const value = (body as Record<string, unknown>)[field];
+    if (value && typeof value === "object") return value as Record<string, unknown>;
+  }
+  return undefined;
 }
 
 /**
  * POSTs the question to `/conversations/{id}/messages` and reads the
- * server's SSE response, assembling the final assistant `Message` itself
- * from the `token` and `citations` events as they arrive, and handing it to
- * `onDone` once the server's `done` event confirms the turn is persisted.
+ * server's SSE response, calling `onToken` for every `token` event as it
+ * arrives -- while the stream is still open, not only once it closes --
+ * and `onDone` with the server's own `message` payload from the `done`
+ * event once the turn is persisted.
  *
  * A non-2xx response is surfaced through `onError` the same way a mid-
  * stream `error` event is, so the caller has one place to branch on either.
@@ -124,9 +128,6 @@ export function askQuestion(
   handlers: AskQuestionHandlers,
 ): () => void {
   const controller = new AbortController();
-
-  let content = "";
-  let citations: Citation[] = [];
 
   function processEvent(rawEvent: string): void {
     let eventType = "message";
@@ -143,26 +144,22 @@ export function askQuestion(
     const data = parseJson(raw);
 
     if (eventType === "token") {
-      const text = fieldFromBody(data, "text");
-      if (text !== undefined) {
-        content += text;
-        handlers.onToken(text);
+      const token = fieldFromBody(data, "token");
+      if (token !== undefined) {
+        handlers.onToken(token);
       }
       return;
     }
     if (eventType === "citations") {
-      const list = citationsFromBody(data);
-      if (list) citations = list;
+      // Sent for completeness ahead of `done`; this client waits for the
+      // server's assembled `message` on `done` rather than re-deriving it.
       return;
     }
     if (eventType === "done") {
-      handlers.onDone({
-        id: randomMessageId(),
-        role: "assistant",
-        content,
-        citations,
-        created_at: new Date().toISOString(),
-      });
+      const message = objectFromBody(data, "message");
+      if (message) {
+        handlers.onDone(message as unknown as Message);
+      }
       return;
     }
     if (eventType === "error") {

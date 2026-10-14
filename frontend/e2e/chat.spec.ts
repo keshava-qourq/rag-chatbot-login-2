@@ -8,7 +8,11 @@ import { expect, type Page, test } from "@playwright/test";
 // obtain a real, authenticated session, then stubs every chat-related
 // response the screen reads. SSE responses are built by hand to match the
 // token/citations/done/error contract documented in
-// frontend/src/lib/conversations.ts.
+// frontend/src/lib/conversations.ts -- the `token` event's payload key is
+// `token` (not `text`), and `done` always carries the full, persisted
+// `message` object (with its `citations`, each citation carrying its own
+// `n`, `document` filename, `page` and `quoted_passage`) exactly as
+// `GET /conversations/{id}` would return it on reload.
 
 const STRONG_PASSWORD = "Str0ngPass!";
 
@@ -40,11 +44,7 @@ async function stubConversationList(page: Page, conversations: unknown[]): Promi
   });
 }
 
-async function stubConversationDetail(
-  page: Page,
-  id: string,
-  detail: unknown,
-): Promise<void> {
+async function stubConversationDetail(page: Page, id: string, detail: unknown): Promise<void> {
   // Registered after stubConversationList so it wins for the more specific
   // /conversations/{id} path (same ordering trick as
   // documents-library.spec.ts's stubDocumentEvents vs stubDocumentList).
@@ -162,22 +162,41 @@ test.describe("Chat answer experience", () => {
 
     const body =
       padding(200_000) +
-      sseEvent("token", { text: "FirstTokenChunk" }) +
+      sseEvent("token", { token: "FirstTokenChunk" }) +
       padding(200_000) +
-      sseEvent("token", { text: " SecondTokenChunk [[1]]" }) +
+      sseEvent("token", { token: " SecondTokenChunk [[1]]" }) +
       padding(200_000) +
       sseEvent("citations", {
         citations: [
           {
             id: "cit-1",
+            n: 1,
             document_id: "doc-1",
+            document: "lease-agreement.pdf",
             page: 14,
             quoted_passage: "Six months' prior notice.",
           },
         ],
       }) +
       padding(200_000) +
-      sseEvent("done", {});
+      sseEvent("done", {
+        message: {
+          id: "m2",
+          role: "assistant",
+          content: "FirstTokenChunk SecondTokenChunk [[1]]",
+          created_at: "2026-01-05T00:00:01Z",
+          citations: [
+            {
+              id: "cit-1",
+              n: 1,
+              document_id: "doc-1",
+              document: "lease-agreement.pdf",
+              page: 14,
+              quoted_passage: "Six months' prior notice.",
+            },
+          ],
+        },
+      });
     await stubAskQuestion(page, "c1", () => ({ body }));
 
     await openChatAndSelectConversation(page);
@@ -222,7 +241,9 @@ test.describe("Chat answer experience", () => {
           citations: [
             {
               id: "cit-1",
+              n: 1,
               document_id: "doc-1",
+              document: "lease-agreement.pdf",
               page: 14,
               quoted_passage: "Six months' prior notice.",
             },
@@ -263,7 +284,7 @@ test.describe("Chat answer experience", () => {
           status: 200,
           headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
           body:
-            sseEvent("token", { text: "a partial answer that never finishes" }) +
+            sseEvent("token", { token: "a partial answer that never finishes" }) +
             sseEvent("error", { message: "The provider failed. Please try again." }),
         });
         return;
@@ -272,7 +293,17 @@ test.describe("Chat answer experience", () => {
       await route.fulfill({
         status: 200,
         headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
-        body: sseEvent("token", { text: "Six months notice" }) + sseEvent("done", {}),
+        body:
+          sseEvent("token", { token: "Six months notice" }) +
+          sseEvent("done", {
+            message: {
+              id: "m3",
+              role: "assistant",
+              content: "Six months notice",
+              created_at: "2026-01-05T00:00:02Z",
+              citations: [],
+            },
+          }),
       });
     });
 
@@ -297,18 +328,24 @@ test.describe("Chat answer experience", () => {
     await stubDocumentEvents(page);
     await stubAskQuestion(page, "c1", () => ({
       body:
-        sseEvent("token", { text: "I don't see an answer to that in your documents." }) +
+        sseEvent("token", { token: "I don't see an answer to that in your documents." }) +
         sseEvent("citations", { citations: [] }) +
-        sseEvent("done", {}),
+        sseEvent("done", {
+          message: {
+            id: "m2",
+            role: "assistant",
+            content: "I don't see an answer to that in your documents.",
+            created_at: "2026-01-05T00:00:01Z",
+            citations: [],
+          },
+        }),
     }));
 
     await openChatAndSelectConversation(page);
     await page.getByLabel(/ask a question/i).fill("What is the capital of France?");
     await page.getByRole("button", { name: "" }).click();
 
-    await expect(
-      page.getByText(/i don.t see an answer to that in your documents/i),
-    ).toBeVisible();
+    await expect(page.getByText(/i don.t see an answer to that in your documents/i)).toBeVisible();
     await expect(page.getByRole("button", { name: /citation/i })).toHaveCount(0);
   });
 

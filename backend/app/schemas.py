@@ -69,10 +69,18 @@ class DocumentResponse(BaseModel):
 
 
 class CitationResponse(BaseModel):
-    """One citation attached to an assistant message."""
+    """One citation attached to an assistant message.
+
+    `n` is the 1-based marker number matching the `[[n]]` marker in the
+    assistant message's `content` this citation belongs to (AC-034, AC-038).
+    `document` is the source document's filename, included directly so a
+    client need not join against the documents list to show it.
+    """
 
     id: str
+    n: int
     document_id: str
+    document: str
     page: int
     quoted_passage: str
 
@@ -81,7 +89,9 @@ class MessageResponse(BaseModel):
     """One message in a conversation, with any citations it carries.
 
     `citations` is always empty for a `user` message; an `assistant` message
-    carries one citation per retrieved chunk it drew its answer from.
+    carries one citation per retrieved chunk it drew its answer from,
+    ordered by `n` so a reload reproduces the exact marker-to-citation
+    mapping (AC-038).
     """
 
     id: str

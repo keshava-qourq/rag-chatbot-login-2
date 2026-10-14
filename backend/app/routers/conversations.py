@@ -20,6 +20,10 @@ answer slipping through (AC-031, AC-032, AC-033).
 Citations are derived strictly from the `[[n]]` markers the model actually
 emitted, resolved only against the excerpts it was actually given: any `n`
 outside that range is dropped before it is streamed or persisted (AC-036).
+Each citation carries the 1-based marker number `n` it was emitted under, so
+the SSE `citations` event and `GET /conversations/{id}` always resolve
+`[[n]]` to the same citation -- ordered by `n`, not by page or insertion
+order (AC-034, AC-038).
 """
 
 from __future__ import annotations
@@ -151,14 +155,18 @@ def _conversation_response(conversation: Conversation) -> ConversationResponse:
 def _citation_response(citation: Citation) -> CitationResponse:
     return CitationResponse(
         id=str(citation.id),
+        n=citation.n,
         document_id=str(citation.document_id),
+        document=citation.document.filename,
         page=citation.page,
         quoted_passage=citation.quoted_passage,
     )
 
 
 def _message_response(message: Message) -> MessageResponse:
-    citations = sorted(message.citations, key=lambda c: (c.page, str(c.id)))
+    # Ordered by marker number, not by page or insertion order -- a reload
+    # must reproduce the exact `[[n]]`-to-citation mapping (AC-038).
+    citations = sorted(message.citations, key=lambda c: c.n)
     return MessageResponse(
         id=str(message.id),
         role=message.role,
@@ -231,7 +239,7 @@ async def get_conversation(
     messages = (
         db.execute(
             select(Message)
-            .options(selectinload(Message.citations))
+            .options(selectinload(Message.citations).selectinload(Citation.document))
             .where(Message.conversation_id == conversation.id)
             .order_by(Message.created_at.asc())
         )
@@ -444,10 +452,16 @@ def _extract_citations(answer: str, chunks: list[Chunk]) -> list[tuple[int, Chun
     return cited
 
 
-def _citation_payload(n: int, chunk: Chunk) -> dict[str, object]:
+def _citation_payload(n: int, citation_id: uuid.UUID, chunk: Chunk) -> dict[str, object]:
+    """The SSE `citations` event payload for one marker, matching exactly
+    what the persisted `Citation` row (same `citation_id`) will carry on
+    reload -- `n`, `id`, `document_id` and `document` (the filename) plus
+    `page` and `quoted_passage` (AC-034, contract)."""
     quoted_passage = chunk.content[:MAX_QUOTED_PASSAGE_CHARS]
     return {
         "n": n,
+        "id": str(citation_id),
+        "document_id": str(chunk.document_id),
         "document": chunk.document.filename,
         "page": chunk.page,
         "quoted_passage": quoted_passage,
@@ -623,12 +637,15 @@ async def _stream_answer(
 
         citations_payload: list[dict[str, object]] = []
         for n, chunk in cited:
-            payload = _citation_payload(n, chunk)
+            citation_id = uuid.uuid4()
+            payload = _citation_payload(n, citation_id, chunk)
             db.add(
                 Citation(
+                    id=citation_id,
                     message_id=assistant_message.id,
                     chunk_id=chunk.id,
                     document_id=chunk.document_id,
+                    n=n,
                     page=chunk.page,
                     quoted_passage=payload["quoted_passage"],
                 )

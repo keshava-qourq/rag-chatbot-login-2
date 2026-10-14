@@ -28,11 +28,13 @@ function actionErrorMessage(err: unknown, fallback: string): string {
 
 /** Splits an assistant message's content on `[[n]]` markers and renders the
  * matching citation as an expandable chip inline, so the quoted passage
- * behind a claim is one click away without leaving the message. A
- * citation's `n` is its 1-based position in the message's citations array
- * -- the contract does not send the number back, only the ordered list --
- * and its document name is resolved from `documentNames` since a citation
- * itself only carries a `document_id`. */
+ * behind a claim is one click away without leaving the message. A marker
+ * resolves to its citation by the citation's own `n` (the marker number the
+ * API returns), not by position in the citations array -- so a skipped or
+ * reordered marker still resolves correctly, including after a reload. The
+ * document name comes from the citation's own `document` field when the API
+ * supplies it, falling back to `documentNames` (keyed by `document_id`)
+ * only when it does not. */
 function MessageContent({
   content,
   citations,
@@ -44,8 +46,12 @@ function MessageContent({
 }) {
   const [expanded, setExpanded] = React.useState<number | null>(null);
   const list = citations ?? [];
-  const byNumber = new Map(list.map((citation, index) => [index + 1, citation]));
+  const byNumber = new Map(list.map((citation) => [citation.n, citation]));
   const parts = content.split(/(\[\[\d+\]\])/g);
+
+  function resolveDocumentName(citation: Citation): string {
+    return citation.document ?? documentNames.get(citation.document_id) ?? "Document";
+  }
 
   return (
     <div className="space-y-2">
@@ -56,7 +62,7 @@ function MessageContent({
           const n = Number(match[1]);
           const citation = byNumber.get(n);
           if (!citation) return <React.Fragment key={index}>{part}</React.Fragment>;
-          const documentName = documentNames.get(citation.document_id) ?? "Document";
+          const documentName = resolveDocumentName(citation);
           return (
             <button
               key={index}
@@ -71,10 +77,10 @@ function MessageContent({
           );
         })}
       </p>
-      {list.map((citation, index) => {
-        const n = index + 1;
+      {list.map((citation) => {
+        const n = citation.n;
         if (expanded !== n) return null;
-        const documentName = documentNames.get(citation.document_id) ?? "Document";
+        const documentName = resolveDocumentName(citation);
         return (
           <div
             key={citation.id || n}

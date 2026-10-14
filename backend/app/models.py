@@ -198,10 +198,21 @@ class Citation(Base):
     document_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
     )
+    # The 1-based marker number `n` matching the `[[n]]` marker the model
+    # actually wrote in the answer text this citation belongs to (AC-034,
+    # AC-038) -- distinct from `page` and from insertion order, so
+    # `GET /conversations/{id}` can order citations by `n` and reproduce the
+    # exact marker-to-citation mapping on reload. Additive column: defaults
+    # to 1 so it never breaks a row inserted before this existed.
+    n: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     page: Mapped[int] = mapped_column(Integer, nullable=False)
     quoted_passage: Mapped[str] = mapped_column(Text, nullable=False)
 
     message: Mapped["Message"] = relationship(back_populates="citations")
+    # Read-only convenience so a citation's response can carry the source
+    # document's filename (AC-034) without the caller joining against the
+    # documents list separately.
+    document: Mapped["Document"] = relationship()
 
 
 __all__ = [

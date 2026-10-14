@@ -10,6 +10,7 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app import models  # noqa: F401 -- imported so the tables register before create_all
 from app.database import Base, engine
@@ -45,6 +46,30 @@ app.add_middleware(
 # The scaffold ships no migrations, so the tables are created from the models on
 # startup. Replace this with Alembic before anything holds data worth keeping.
 Base.metadata.create_all(bind=engine)
+
+
+def _ensure_additive_columns() -> None:
+    """Add a column `create_all` cannot: it only creates missing *tables*,
+    never alters one that already exists. On SQLite (tests, local dev) a
+    `citations` table created before the `n` column (US-011-1) existed
+    would otherwise be missing it forever; this adds it, with its model
+    default, exactly once and only when it is not already there. Postgres
+    deployments have no migration tooling yet either (see the note above)
+    and are expected to run DDL by hand, so this only touches SQLite.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as connection:
+        columns = {
+            row[1] for row in connection.execute(text("PRAGMA table_info(citations)")).fetchall()
+        }
+        if columns and "n" not in columns:
+            connection.execute(
+                text("ALTER TABLE citations ADD COLUMN n INTEGER NOT NULL DEFAULT 1")
+            )
+
+
+_ensure_additive_columns()
 
 for router in routers:
     app.include_router(router)

@@ -123,7 +123,14 @@ describe("Chat screen", () => {
           content: "Six months notice [[1]]",
           created_at: "",
           citations: [
-            { id: "cit-1", document_id: "r0", page: 14, quoted_passage: "Six months' prior notice." },
+            {
+              id: "cit-1",
+              n: 1,
+              document_id: "r0",
+              document: "ready-0.pdf",
+              page: 14,
+              quoted_passage: "Six months' prior notice.",
+            },
           ],
         },
       ],
@@ -141,6 +148,62 @@ describe("Chat screen", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /citation 1/i }));
     expect(screen.queryByText(/six months' prior notice/i)).not.toBeInTheDocument();
+  });
+
+  it("AC-034/038: a marker resolves by its citation's n, not by array position, even when a marker is skipped", async () => {
+    vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
+      { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
+    ]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+    vi.spyOn(conversationsApi, "getConversation").mockResolvedValue({
+      id: "c1",
+      title: "Lease questions",
+      title_locked: false,
+      created_at: "",
+      updated_at: "",
+      messages: [
+        { id: "m1", role: "user", content: "What else?", created_at: "" },
+        {
+          id: "m2",
+          role: "assistant",
+          content: "First point [[1]]. Third point [[3]].",
+          created_at: "",
+          // Note: citation array order deliberately does not match marker
+          // order, and marker [[2]] was skipped entirely -- [[3]] must
+          // still resolve to the citation whose own n is 3, not to the
+          // second array entry.
+          citations: [
+            {
+              id: "cit-3",
+              n: 3,
+              document_id: "r0",
+              document: "ready-0.pdf",
+              page: 9,
+              quoted_passage: "Third passage.",
+            },
+            {
+              id: "cit-1",
+              n: 1,
+              document_id: "r0",
+              document: "ready-0.pdf",
+              page: 2,
+              quoted_passage: "First passage.",
+            },
+          ],
+        },
+      ],
+    });
+
+    renderChat();
+    fireEvent.click(await screen.findByText("Lease questions"));
+    await screen.findByText(/first point/i);
+
+    fireEvent.click(screen.getByRole("button", { name: /citation 3/i }));
+    expect(await screen.findByText(/third passage/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /citation 3/i }));
+    fireEvent.click(screen.getByRole("button", { name: /citation 1/i }));
+    expect(await screen.findByText(/first passage/i)).toBeInTheDocument();
   });
 
   it("renames a conversation via PATCH /conversations/{id}", async () => {
@@ -171,9 +234,7 @@ describe("Chat screen", () => {
       { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
     ]);
     vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
-    const deleteSpy = vi
-      .spyOn(conversationsApi, "deleteConversation")
-      .mockResolvedValue(undefined);
+    const deleteSpy = vi.spyOn(conversationsApi, "deleteConversation").mockResolvedValue(undefined);
 
     renderChat();
     await screen.findByText("Lease questions");
@@ -227,7 +288,14 @@ describe("Chat screen", () => {
         content: "Six months notice [[1]]",
         created_at: "",
         citations: [
-          { id: "cit-1", document_id: "r0", page: 14, quoted_passage: "Six months' prior notice." },
+          {
+            id: "cit-1",
+            n: 1,
+            document_id: "r0",
+            document: "ready-0.pdf",
+            page: 14,
+            quoted_passage: "Six months' prior notice.",
+          },
         ],
       });
     });
