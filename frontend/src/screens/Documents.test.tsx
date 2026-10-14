@@ -280,8 +280,31 @@ describe("Documents library", () => {
 
     const heading = await screen.findByText("broken.pdf");
     const row = heading.closest("li") as HTMLElement;
-    expect(within(row).getByText(/failed/i)).toBeInTheDocument();
+    expect(within(row).getByText(/^failed$/i)).toBeInTheDocument();
     expect(within(row).getByText(/could not extract text from this file/i)).toBeInTheDocument();
+  });
+
+  it("AC-066/AC-067: a failed document with no failure_reason shows a fixed, non-technical fallback instead of nothing or a raw value", async () => {
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([
+      {
+        id: "doc-failed",
+        filename: "broken.pdf",
+        created_at: "2026-01-01T00:00:00Z",
+        size_bytes: 1024,
+        status: "failed",
+        failure_reason: null,
+      },
+    ]);
+
+    renderDocuments();
+
+    const heading = await screen.findByText("broken.pdf");
+    const row = heading.closest("li") as HTMLElement;
+    expect(within(row).getByText(/^failed$/i)).toBeInTheDocument();
+    expect(
+      within(row).getByText(/this document failed to process\. please try again\./i),
+    ).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: /retry/i })).toBeInTheDocument();
   });
 
   it("AC-025: Retry calls POST /documents/{id}/retry and updates the row to Queued, clearing the failure reason", async () => {
@@ -340,7 +363,7 @@ describe("Documents library", () => {
     fireEvent.click(within(row).getByRole("button", { name: /retry/i }));
 
     expect(await screen.findByText("Retry failed.")).toBeInTheDocument();
-    expect(within(row).getByText(/failed/i)).toBeInTheDocument();
+    expect(within(row).getByText(/^failed$/i)).toBeInTheDocument();
     expect(within(row).getByText(/could not extract text from this file/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /dismiss action error/i }));

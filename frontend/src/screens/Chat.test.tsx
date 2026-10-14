@@ -638,7 +638,7 @@ describe("Chat screen", () => {
     expect(screen.getByLabelText(/ask a question/i)).toBeDisabled();
   });
 
-  it("AC-039: a mid-stream error event replaces the partial answer with a clear error and a Retry that resubmits the same question", async () => {
+  it("AC-065/AC-067: a mid-stream error event drops the partial answer and shows only the fixed 'temporarily unavailable' copy -- never the provider's own error text -- with a Retry that resubmits the same question", async () => {
     vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
       { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
     ]);
@@ -670,15 +670,107 @@ describe("Chat screen", () => {
 
     act(() => {
       handlers!.onToken("partial answer");
-      handlers!.onError("The provider failed. Please try again.");
+      // A raw, technical provider error -- must never reach the DOM.
+      handlers!.onError("GeminiError: 503 UNAVAILABLE at provider.internal, key=sk-abc123");
     });
 
-    expect(await screen.findByText("The provider failed. Please try again.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("The assistant is temporarily unavailable. Please try again."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/GeminiError/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/sk-abc123/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
     expect(screen.queryByText(/partial answer/i)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /retry/i }));
     await waitFor(() => expect(askSpy).toHaveBeenCalledTimes(2));
     expect(askSpy.mock.calls[1][1]).toBe("What happened?");
+  });
+
+  it("AC-065/AC-067: an unknown/empty error payload still falls back to the same fixed copy", async () => {
+    vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
+      { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
+    ]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+    vi.spyOn(conversationsApi, "getConversation").mockResolvedValue({
+      id: "c1",
+      title: "Lease questions",
+      title_locked: false,
+      created_at: "",
+      updated_at: "",
+      messages: [],
+    });
+
+    let handlers: conversationsApi.AskQuestionHandlers | undefined;
+    vi.spyOn(conversationsApi, "askQuestion").mockImplementation((_id, _q, h) => {
+      handlers = h;
+      return () => {};
+    });
+
+    renderChat();
+    fireEvent.click(await screen.findByText("Lease questions"));
+    await screen.findByText(/ask a question about your documents/i);
+
+    const textarea = screen.getByLabelText(/ask a question/i);
+    fireEvent.change(textarea, { target: { value: "What happened?" } });
+    fireEvent.click(screen.getByRole("button", { name: "" }));
+
+    await waitFor(() => expect(handlers).toBeDefined());
+
+    act(() => {
+      handlers!.onError("");
+    });
+
+    expect(
+      await screen.findByText("The assistant is temporarily unavailable. Please try again."),
+    ).toBeInTheDocument();
+  });
+
+  it("AC-065: dismissing the error clears the banner without leaving the failed turn rendered as an answer", async () => {
+    vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
+      { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
+    ]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+    vi.spyOn(conversationsApi, "getConversation").mockResolvedValue({
+      id: "c1",
+      title: "Lease questions",
+      title_locked: false,
+      created_at: "",
+      updated_at: "",
+      messages: [],
+    });
+
+    let handlers: conversationsApi.AskQuestionHandlers | undefined;
+    vi.spyOn(conversationsApi, "askQuestion").mockImplementation((_id, _q, h) => {
+      handlers = h;
+      return () => {};
+    });
+
+    renderChat();
+    fireEvent.click(await screen.findByText("Lease questions"));
+    await screen.findByText(/ask a question about your documents/i);
+
+    const textarea = screen.getByLabelText(/ask a question/i);
+    fireEvent.change(textarea, { target: { value: "What happened?" } });
+    fireEvent.click(screen.getByRole("button", { name: "" }));
+
+    await waitFor(() => expect(handlers).toBeDefined());
+
+    act(() => {
+      handlers!.onToken("partial answer");
+      handlers!.onError("boom");
+    });
+
+    expect(
+      await screen.findByText("The assistant is temporarily unavailable. Please try again."),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /dismiss error/i }));
+
+    expect(
+      screen.queryByText("The assistant is temporarily unavailable. Please try again."),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/partial answer/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

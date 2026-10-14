@@ -24,6 +24,18 @@ Each citation carries the 1-based marker number `n` it was emitted under, so
 the SSE `citations` event and `GET /conversations/{id}` always resolve
 `[[n]]` to the same citation -- ordered by `n`, not by page or insertion
 order (AC-034, AC-038).
+
+A Gemini failure anywhere on this endpoint's path -- opening the chat
+stream, a failure partway through it, or the retrieval embedding call that
+runs before it -- never reaches the client as anything but the single fixed
+`ASSISTANT_UNAVAILABLE_MESSAGE` `error` event, and never leaves a trace of
+that turn persisted: the user and assistant `Message` rows for a failed
+turn are only ever added to the session after the stream has completed
+without error, so there is nothing to roll back when it does not (AC-065,
+AC-067). The same question can simply be re-submitted afterwards -- nothing
+about a failed attempt is retried against the provider mid-stream (that
+would risk duplicating tokens already forwarded to the client) or leaves
+state behind that would make a retry behave differently from a first try.
 """
 
 from __future__ import annotations
@@ -134,8 +146,27 @@ PROCESSING_MESSAGE = (
     "to finish before asking a question."
 )
 
-_STREAM_ERROR_MESSAGE = "The answer could not be completed. Nothing was saved."
-_RETRIEVAL_ERROR_MESSAGE = "The question could not be processed right now. Nothing was saved."
+# AC-065/AC-067: the one fixed, provider-detail-free message shown for any
+# Gemini failure on this endpoint's path -- whether the chat stream never
+# opens, fails partway through, or the retrieval embedding call ahead of it
+# fails or times out. Never carries any provider text, a stack trace, or any
+# fragment of a credential: whatever `GeminiProviderError` actually says
+# (logged, redacted, server-side only -- see `app.gemini_client`) stops at
+# this module's boundary and is replaced by this string before it ever
+# reaches an SSE event or an HTTP response body. Re-submitting the same
+# question afterwards is a plain retry of this same endpoint: nothing about
+# a failed turn is persisted (see `_stream_answer`), so there is no stale
+# state for a resubmission to collide with.
+ASSISTANT_UNAVAILABLE_MESSAGE = (
+    "The assistant is temporarily unavailable. Please try again in a moment."
+)
+
+# Kept as aliases of the one fixed message above: a stream-open/mid-stream
+# failure and a pre-stream retrieval failure are both, from the caller's
+# point of view, "the assistant could not answer this time" -- there is no
+# user-facing reason to distinguish them.
+_STREAM_ERROR_MESSAGE = ASSISTANT_UNAVAILABLE_MESSAGE
+_RETRIEVAL_ERROR_MESSAGE = ASSISTANT_UNAVAILABLE_MESSAGE
 _NOT_FOUND_ERROR_MESSAGE = "conversation not found"
 
 # A title long enough to be recognisable, short enough to fit a sidebar row.
@@ -356,7 +387,9 @@ def resolve_follow_up_question(
     resolve against), and falls back to it on any provider failure or an
     empty/unusable rewrite (constraint: a resolution failure must never
     become an un-grounded answer, only the raw question going into the
-    normal, grounded retrieval path).
+    normal, grounded retrieval path). A history-resolution failure is
+    therefore never surfaced to the caller as an error at all -- it simply
+    degrades to treating the follow-up as if it were a first question.
     """
     history = _fetch_recent_history(db, conversation_id, user_id)
     if not history:
@@ -393,6 +426,11 @@ def _retrieve_relevant_chunks(db: DBSession, user_id: uuid.UUID, question: str) 
     the ownership or readiness filtering. Callers pass the already-resolved
     question (US-013-1) so a follow-up retrieves against its intended
     subject, not its literal pronoun.
+
+    Raises `GeminiProviderError` (bounded retry + backoff already applied
+    inside `app.gemini_client.embed`) on a persistent embedding failure --
+    the caller turns that into `ASSISTANT_UNAVAILABLE_MESSAGE` rather than
+    ever propagating it (AC-065, AC-067).
     """
     candidates = get_ready_chunks(db, user_id)
     if not candidates:
@@ -545,8 +583,14 @@ async def _stream_answer(
     this generator keeps running for the lifetime of the stream. Nothing is
     written to the database until the full answer has streamed
     successfully (or a refusal path is taken deliberately); a provider
-    failure at any point yields an `error` event and leaves no trace of
-    this turn.
+    failure at any point -- opening the chat stream, partway through it, or
+    the retrieval embedding call that runs before it -- yields a single
+    fixed `error` event (`ASSISTANT_UNAVAILABLE_MESSAGE`) and leaves no
+    trace of this turn: neither the `Message` row for the user's question
+    nor one for an assistant reply is ever added to the session on any of
+    those paths, so there is nothing to roll back and nothing that makes a
+    later re-submission of the same question behave any differently from a
+    first attempt (AC-065).
 
     `question` is always the user's raw, literal text -- it is what gets
     persisted as the user message. Before retrieval runs, it is resolved
@@ -597,6 +641,8 @@ async def _stream_answer(
         try:
             relevant_chunks = _retrieve_relevant_chunks(db, user_id, resolved_question)
         except GeminiProviderError:
+            # Nothing has been added to this session yet -- the retrieval
+            # failure never becomes a persisted turn (AC-065, AC-067).
             yield _sse("error", {"message": _RETRIEVAL_ERROR_MESSAGE})
             return
 
@@ -618,7 +664,12 @@ async def _stream_answer(
                 yield _sse("token", {"token": token})
         except GeminiProviderError:
             # Nothing has been added to this session, so there is nothing
-            # to roll back -- the failure simply never gets persisted.
+            # to roll back -- the failure simply never gets persisted
+            # (AC-065). Covers both a failure before the first token (the
+            # stream never opened) and one partway through it: either way
+            # the client sees the same fixed, provider-detail-free message
+            # (AC-067) and can simply re-submit the same question, which
+            # runs this generator again from a clean state (AC-065).
             yield _sse("error", {"message": _STREAM_ERROR_MESSAGE})
             return
 

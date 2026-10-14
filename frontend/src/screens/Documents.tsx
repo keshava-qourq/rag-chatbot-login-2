@@ -33,6 +33,15 @@ const STATUS_VARIANT: Record<DocumentStatus, string> = {
   failed: "danger",
 };
 
+/**
+ * AC-066/AC-067: shown in place of `failure_reason` whenever the field is
+ * missing or not a usable string -- an unrecognized failure payload must
+ * fall back to fixed, non-technical copy rather than render nothing (which
+ * would hide that the document needs a retry) or risk a raw value slipping
+ * through untyped.
+ */
+const DOCUMENT_FAILURE_FALLBACK = "This document failed to process. Please try again.";
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const units = ["KB", "MB", "GB"];
@@ -57,6 +66,10 @@ function formatDate(iso: string): string {
 
 function StatusBadge({ status }: { status: DocumentStatus }) {
   return <Badge variant={STATUS_VARIANT[status]}>{STATUS_LABEL[status]}</Badge>;
+}
+
+function failureReasonText(reason: string | null | undefined): string {
+  return typeof reason === "string" && reason.trim() ? reason : DOCUMENT_FAILURE_FALLBACK;
 }
 
 function actionErrorMessage(err: unknown, fallback: string): string {
@@ -309,8 +322,10 @@ export default function Documents() {
                   <p className="text-xs text-[var(--brand-fg-muted)]">
                     {formatDate(doc.created_at)} · {formatSize(doc.size_bytes)}
                   </p>
-                  {doc.status === "failed" && doc.failure_reason ? (
-                    <p className="mt-1 text-xs text-red-700">{doc.failure_reason}</p>
+                  {doc.status === "failed" ? (
+                    <p className="mt-1 text-xs text-red-700">
+                      {failureReasonText(doc.failure_reason)}
+                    </p>
                   ) : null}
                 </div>
               </div>

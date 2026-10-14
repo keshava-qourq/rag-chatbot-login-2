@@ -16,7 +16,7 @@ import { type Document, listDocuments } from "@/lib/documents";
 import { Icons } from "@/lib/icons";
 import { Badge, Button, Empty, Textarea } from "@/lib/ui";
 
-const { Plus, Trash, Edit, ArrowRight, AlertCircle } = Icons;
+const { Plus, Trash, Edit, ArrowRight, AlertCircle, X } = Icons;
 
 type ListState = "loading" | "error" | "ready";
 type ThreadState = "idle" | "loading" | "error" | "ready";
@@ -25,6 +25,19 @@ type Citation = NonNullable<Message["citations"]>[number];
 function actionErrorMessage(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
 }
+
+/**
+ * AC-065/AC-067: the one message ever shown when a turn's stream ends in
+ * error -- whatever the SSE `error` event, a non-2xx response, or a network
+ * failure actually said is never rendered. The provider's own wording can
+ * carry technical detail (stack fragments, internal error codes, key
+ * fragments) that must never reach the page, and an unrecognized or absent
+ * payload has nothing safe to show either -- so this fixed, non-technical
+ * copy is what every failure path renders, with no branch on the
+ * underlying message text.
+ */
+const ASSISTANT_UNAVAILABLE_MESSAGE =
+  "The assistant is temporarily unavailable. Please try again.";
 
 /** Splits an assistant message's content on `[[n]]` markers and renders the
  * matching citation as an expandable chip inline, so the quoted passage
@@ -319,10 +332,16 @@ export default function Chat() {
             void refreshConversationsSilently();
             resolve();
           },
-          onError: (message) => {
+          onError: () => {
+            // AC-065/AC-067: whatever the stream actually said is discarded
+            // here -- the partial, in-progress bubble is dropped (it was
+            // never added to `messages`, only held in `streamingContent`),
+            // and the one fixed, non-technical message is what the user
+            // ever sees, regardless of what the provider, the server, or a
+            // network failure reported underneath.
             setStreamingContent(null);
             setSending(false);
-            setSendError(message);
+            setSendError(ASSISTANT_UNAVAILABLE_MESSAGE);
             resolve();
           },
         });
@@ -364,9 +383,21 @@ export default function Chat() {
   }, [question, sending, composerBlocked, selectedId, runQuestion]);
 
   const handleRetry = React.useCallback(() => {
+    // AC-065: Retry resends the exact same question to the same
+    // conversation, not a fresh one -- the failed turn's banner and partial
+    // bubble are already gone (cleared when the error arrived), so a
+    // successful retry simply appends the new turn with nothing left over
+    // from the failed attempt.
     if (!selectedId || !lastQuestionRef.current) return;
     void runQuestion(selectedId, lastQuestionRef.current);
   }, [selectedId, runQuestion]);
+
+  const handleDismissError = React.useCallback(() => {
+    // AC-065: dismissing just clears the banner -- the failed turn was
+    // never rendered as an answer (it only ever lived in the now-cleared
+    // streaming buffer), so there is nothing else to roll back.
+    setSendError(null);
+  }, []);
 
   const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -602,6 +633,14 @@ export default function Chat() {
               <Button type="button" variant="secondary" size="sm" onClick={handleRetry}>
                 {"Retry"}
               </Button>
+              <button
+                type="button"
+                aria-label="Dismiss error"
+                onClick={handleDismissError}
+                className="shrink-0 text-red-700 hover:text-red-900"
+              >
+                <X size={16} />
+              </button>
             </div>
           ) : null}
         </div>
