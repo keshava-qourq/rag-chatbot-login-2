@@ -217,7 +217,7 @@ export default function Screen() {
                   type="button"
                   onClick={() => setNoticeOpen(false)}
                   aria-label="Dismiss session expiry notice"
-                  className="lg-soft -mr-1 -mt-1 rounded p-1.5 hover:opacity-70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                  className="lg-soft -mr-1 -mt-1 inline-flex min-h-11 min-w-11 items-center justify-center rounded p-1.5 hover:opacity-70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 lg:min-h-0 lg:min-w-0"
                   style={{ color: brand.neutralColor, outlineColor: brand.primaryColor }}
                 >
                   <Icons.X className="h-4 w-4" aria-hidden="true" />
@@ -340,7 +340,7 @@ export default function Screen() {
                           <button
                             type="button"
                             onClick={() => submit()}
-                            className="lg-soft mt-3 inline-flex items-center gap-1.5 rounded border px-3 py-1.5 text-sm font-medium hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                            className="lg-soft mt-3 inline-flex min-h-11 items-center gap-1.5 rounded border px-3 py-1.5 text-sm font-medium hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 lg:min-h-0"
                             style={{
                               borderColor: lineStrong,
                               borderRadius: brand.radius,
@@ -371,7 +371,7 @@ export default function Screen() {
                             setBanner(null);
                             emailRef.current?.focus();
                           }}
-                          className="lg-soft rounded text-sm font-medium underline underline-offset-2 hover:opacity-75 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                          className="lg-soft inline-flex min-h-11 items-center rounded text-sm font-medium underline underline-offset-2 hover:opacity-75 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 lg:min-h-0"
                           style={{ color: brand.primaryColor, outlineColor: brand.primaryColor }}
                         >
                           Not you? Use another email
@@ -422,7 +422,7 @@ export default function Screen() {
                         type="button"
                         onClick={() => setShowPassword((v) => !v)}
                         aria-pressed={showPassword}
-                        className="lg-soft rounded text-sm font-medium underline underline-offset-2 hover:opacity-75 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                        className="lg-soft inline-flex min-h-11 items-center rounded text-sm font-medium underline underline-offset-2 hover:opacity-75 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 lg:min-h-0"
                         style={{ color: brand.primaryColor, outlineColor: brand.primaryColor }}
                       >
                         {showPassword ? "Hide password" : "Show password"}
@@ -529,7 +529,7 @@ export default function Screen() {
                     onClick={() => setHelpOpen((v) => !v)}
                     aria-expanded={helpOpen}
                     aria-controls="forgot-panel"
-                    className="lg-soft flex w-full items-center justify-between gap-3 rounded px-1 py-2 text-left hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                    className="lg-soft flex min-h-11 w-full items-center justify-between gap-3 rounded px-1 py-2 text-left hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 lg:min-h-0"
                     style={{ outlineColor: brand.primaryColor }}
                   >
                     <span className="text-sm font-semibold" style={{ color: "#1A2433" }}>
@@ -584,7 +584,7 @@ export default function Screen() {
                   <button
                     type="button"
                     onClick={() => navigate("sign-up")}
-                    className="lg-soft inline-flex items-center gap-1.5 border bg-white px-4 py-2 text-sm font-semibold hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                    className="lg-soft inline-flex min-h-11 items-center gap-1.5 border bg-white px-4 py-2 text-sm font-semibold hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 lg:min-h-0"
                     style={{
                       borderColor: hexToRgba(brand.primaryColor, 0.4),
                       borderRadius: brand.radius,
@@ -642,7 +642,7 @@ export default function Screen() {
                 <button
                   type="button"
                   onClick={() => navigate("getting-started")}
-                  className="lg-soft inline-flex items-center gap-1.5 rounded text-sm font-semibold underline underline-offset-4 hover:opacity-75 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                  className="lg-soft inline-flex min-h-11 items-center gap-1.5 rounded text-sm font-semibold underline underline-offset-4 hover:opacity-75 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 lg:min-h-0"
                   style={{ color: brand.primaryColor, outlineColor: brand.primaryColor }}
                 >
                   <Icons.FileText className="h-4 w-4" aria-hidden="true" />

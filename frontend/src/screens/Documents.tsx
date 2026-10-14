@@ -42,6 +42,13 @@ const STATUS_VARIANT: Record<DocumentStatus, string> = {
  */
 const DOCUMENT_FAILURE_FALLBACK = "This document failed to process. Please try again.";
 
+// Below the `lg` (1024px) breakpoint, floors a control's box to a 44x44 tap
+// target (`min-h-11 lg:min-h-0`, `min-w-11 lg:min-w-0`), the same
+// floor-and-release pattern used in `lib/ui.tsx`: at `lg` and above the
+// floor lifts and the icon-sized box returns, so desktop is unchanged.
+const ICON_BUTTON_TAP_TARGET =
+  "inline-flex min-h-11 min-w-11 items-center justify-center lg:min-h-0 lg:min-w-0";
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const units = ["KB", "MB", "GB"];
@@ -192,7 +199,7 @@ export default function Documents() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-3xl p-8">
+    <div className="mx-auto max-w-3xl p-4 sm:p-8">
       <header className="mb-6">
         <h1
           className="text-2xl font-semibold text-[var(--brand-fg)]"
@@ -209,7 +216,7 @@ export default function Documents() {
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
-        className="mb-6 flex flex-col items-center gap-3 rounded-[var(--brand-radius)] border-2 border-dashed px-6 py-8 text-center transition-colors"
+        className="mb-6 flex flex-col items-center gap-3 rounded-[var(--brand-radius)] border-2 border-dashed px-4 py-8 text-center transition-colors sm:px-6"
         style={{
           borderColor: isDragging ? "var(--brand-primary)" : "var(--brand-border)",
           backgroundColor: isDragging ? "var(--brand-hover)" : "var(--brand-surface)",
@@ -220,7 +227,7 @@ export default function Documents() {
           {"Drag and drop files here, or"}{" "}
           <label
             htmlFor="document-upload-input"
-            className="cursor-pointer font-medium text-[var(--brand-primary)] underline"
+            className="inline-flex min-h-11 cursor-pointer items-center font-medium text-[var(--brand-primary)] underline lg:min-h-0"
           >
             {"choose documents to upload"}
           </label>
@@ -250,12 +257,12 @@ export default function Documents() {
           className="mb-6 flex items-start gap-2 rounded-[var(--brand-radius)] border border-red-200 bg-red-50 p-4 text-sm text-red-700"
         >
           <AlertCircle size={16} className="mt-0.5 shrink-0" />
-          <p className="flex-1">{uploadError}</p>
+          <p className="min-w-0 flex-1 break-words">{uploadError}</p>
           <button
             type="button"
             aria-label="Dismiss error"
             onClick={() => setUploadError(null)}
-            className="shrink-0 text-red-700 hover:text-red-900"
+            className={`shrink-0 text-red-700 hover:text-red-900 ${ICON_BUTTON_TAP_TARGET}`}
           >
             <X size={16} />
           </button>
@@ -268,12 +275,12 @@ export default function Documents() {
           className="mb-6 flex items-start gap-2 rounded-[var(--brand-radius)] border border-red-200 bg-red-50 p-4 text-sm text-red-700"
         >
           <AlertCircle size={16} className="mt-0.5 shrink-0" />
-          <p className="flex-1">{actionError}</p>
+          <p className="min-w-0 flex-1 break-words">{actionError}</p>
           <button
             type="button"
             aria-label="Dismiss action error"
             onClick={() => setActionError(null)}
-            className="shrink-0 text-red-700 hover:text-red-900"
+            className={`shrink-0 text-red-700 hover:text-red-900 ${ICON_BUTTON_TAP_TARGET}`}
           >
             <X size={16} />
           </button>
@@ -312,7 +319,10 @@ export default function Documents() {
       {screenState === "ready" && documents.length > 0 ? (
         <ul className="divide-y divide-slate-100 rounded-[var(--brand-radius)] border border-slate-200 bg-white">
           {documents.map((doc) => (
-            <li key={doc.id} className="flex items-center justify-between gap-4 p-4">
+            <li
+              key={doc.id}
+              className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
+            >
               <div className="flex min-w-0 items-start gap-3">
                 <FileText size={18} className="mt-0.5 shrink-0 text-[var(--brand-fg-muted)]" />
                 <div className="min-w-0">
@@ -329,7 +339,7 @@ export default function Documents() {
                   ) : null}
                 </div>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <StatusBadge status={doc.status} />
                 {doc.status === "failed" ? (
                   <Button

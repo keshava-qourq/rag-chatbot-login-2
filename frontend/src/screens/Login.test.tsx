@@ -68,4 +68,32 @@ describe("Login", () => {
     expect(await screen.findByText("The email or password is incorrect.")).toBeInTheDocument();
     expect(screen.queryByText("Documents screen")).not.toBeInTheDocument();
   });
+
+  it("AC-055: the password-visibility toggle and 'Create an account' link carry a 44px mobile tap-target floor that releases at lg", () => {
+    renderLogin();
+
+    const toggle = screen.getByRole("button", { name: /show password/i });
+    expect(toggle).toHaveClass("min-h-11");
+    expect(toggle).toHaveClass("lg:min-h-0");
+
+    const createAccount = screen.getByRole("button", { name: /create an account/i });
+    expect(createAccount).toHaveClass("min-h-11");
+    expect(createAccount).toHaveClass("lg:min-h-0");
+  });
+
+  it("AC-055: the 'keep me signed in' checkbox grows to a 44x44 floor on mobile and releases it at lg", () => {
+    renderLogin();
+    const checkbox = screen.getByRole("checkbox", { name: /keep me signed in/i });
+    expect(checkbox).toHaveClass("min-h-11");
+    expect(checkbox).toHaveClass("min-w-11");
+    expect(checkbox).toHaveClass("lg:min-h-0");
+    expect(checkbox).toHaveClass("lg:min-w-0");
+  });
+
+  it("AC-055: the primary/secondary columns stack before the lg breakpoint, not a fixed two-column grid", () => {
+    const { container } = renderLogin();
+    const grid = container.querySelector(".grid");
+    expect(grid).toHaveClass("lg:grid-cols-[minmax(0,1fr)_21rem]");
+    expect(grid).not.toHaveClass("grid-cols-[minmax(0,1fr)_21rem]");
+  });
 });

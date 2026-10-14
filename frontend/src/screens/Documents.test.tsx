@@ -470,4 +470,69 @@ describe("Documents library", () => {
 
     expect(within(row).getByRole("button", { name: /delete report\.pdf/i })).toBeInTheDocument();
   });
+
+  it("AC-057: a very long filename is rendered with a truncation class rather than wrapping or overflowing the row", async () => {
+    const longName =
+      "quarterly-financial-statement-and-supporting-schedules-for-the-fiscal-year-ending-2026.pdf";
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([
+      {
+        id: "doc-long",
+        filename: longName,
+        created_at: "2026-01-01T00:00:00Z",
+        size_bytes: 1024,
+        status: "ready",
+      },
+    ]);
+
+    renderDocuments();
+
+    const heading = await screen.findByText(longName);
+    expect(heading).toHaveClass("truncate");
+    const row = heading.closest("li") as HTMLElement;
+    // The filename's wrapper must not force a fixed width wider than its
+    // flex container -- `min-w-0` is what lets `truncate` take effect
+    // instead of the row overflowing horizontally.
+    expect(heading.parentElement).toHaveClass("min-w-0");
+    expect(row).toHaveClass("flex-col");
+  });
+
+  it("AC-055: the document row stacks vertically (not a fixed-width horizontal layout) so narrow viewports do not need to scroll", async () => {
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([
+      {
+        id: "doc-1",
+        filename: "report.pdf",
+        created_at: "2026-01-01T00:00:00Z",
+        size_bytes: 1024,
+        status: "queued",
+      },
+    ]);
+
+    renderDocuments();
+    const heading = await screen.findByText("report.pdf");
+    const row = heading.closest("li") as HTMLElement;
+
+    expect(row).toHaveClass("flex-col");
+    expect(row).toHaveClass("sm:flex-row");
+  });
+
+  it("AC-055: the upload button and dismiss controls carry a 44px mobile tap-target floor that releases at the lg breakpoint", async () => {
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue([]);
+    vi.spyOn(documentsApi, "uploadDocuments").mockRejectedValue(
+      new ApiError(500, { message: "Upload failed." }, "Upload failed."),
+    );
+
+    renderDocuments();
+    await screen.findByText(/no documents yet/i);
+
+    const uploadButton = screen.getByRole("button", { name: /upload documents/i });
+    expect(uploadButton).toHaveClass("min-h-11");
+    expect(uploadButton).toHaveClass("lg:min-h-0");
+
+    selectFiles(getFileInput(), [makeFile("x.pdf", 10, "application/pdf")]);
+    const dismiss = await screen.findByRole("button", { name: /dismiss error/i });
+    expect(dismiss).toHaveClass("min-h-11");
+    expect(dismiss).toHaveClass("min-w-11");
+    expect(dismiss).toHaveClass("lg:min-h-0");
+    expect(dismiss).toHaveClass("lg:min-w-0");
+  });
 });

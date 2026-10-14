@@ -46,9 +46,15 @@ export function Button({
         "transition-colors focus-visible:outline-none focus-visible:ring-2",
         "focus-visible:ring-[var(--brand-primary)] focus-visible:ring-offset-2",
         "disabled:pointer-events-none disabled:opacity-50",
+        // Below the `lg` (1024px) breakpoint, `min-h-11` forces every button to
+        // at least a 44px tap target regardless of its fixed `h-*` size class
+        // (CSS resolves a `height` smaller than `min-height` up to the
+        // `min-height`, so this never shrinks a button). At `lg` and above,
+        // `min-h-0` lifts that floor so desktop keeps its original height.
+        "min-h-11 lg:min-h-0",
         BUTTON_VARIANTS[variant] ?? BUTTON_VARIANTS.primary,
         BUTTON_SIZES[size] ?? BUTTON_SIZES.md,
-        className
+        className,
       )}
       style={{ ...branded, ...style }}
     />
@@ -61,7 +67,7 @@ export function Card({ className, ...props }: Div) {
       {...props}
       className={cx(
         "rounded-[var(--brand-radius)] border border-slate-200 bg-white shadow-sm",
-        className
+        className,
       )}
     />
   );
@@ -101,7 +107,10 @@ export function CardFooter({ className, ...props }: Div) {
 const FIELD =
   "w-full rounded-[var(--brand-radius)] border border-slate-300 bg-white px-3 py-2 text-sm " +
   "placeholder:text-slate-400 focus:border-[var(--brand-primary)] focus:outline-none " +
-  "focus:ring-1 focus:ring-[var(--brand-primary)]";
+  "focus:ring-1 focus:ring-[var(--brand-primary)] " +
+  // Same floor-and-release pattern as `Button`: a 44px minimum height below
+  // `lg`, released back to the original fixed height at `lg` and above.
+  "min-h-11 lg:min-h-0";
 
 export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={cx(FIELD, "h-9", className)} />;
@@ -143,7 +152,14 @@ export function Checkbox({ className, ...props }: React.InputHTMLAttributes<HTML
     <input
       {...props}
       type="checkbox"
-      className={cx("h-4 w-4 rounded border-slate-300 accent-[var(--brand-primary)]", className)}
+      className={cx(
+        "h-4 w-4 rounded border-slate-300 accent-[var(--brand-primary)]",
+        // Below `lg`, grow the hit area to a 44x44 tap target (the checkbox
+        // stays visually anchored via its own border/accent styling); at `lg`
+        // and above the floor is released and the original 16x16 box returns.
+        "min-h-11 min-w-11 lg:min-h-0 lg:min-w-0",
+        className,
+      )}
     />
   );
 }
@@ -190,7 +206,7 @@ export function Badge({
       className={cx(
         "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
         BADGE_VARIANTS[variant] ?? BADGE_VARIANTS.default,
-        className
+        className,
       )}
       style={variant === "accent" ? { backgroundColor: "var(--brand-accent)", ...style } : style}
     />
@@ -223,7 +239,7 @@ export function TH({ className, ...props }: React.ThHTMLAttributes<HTMLTableCell
       {...props}
       className={cx(
         "px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500",
-        className
+        className,
       )}
     />
   );
@@ -253,7 +269,7 @@ export function Avatar({
       className={cx(
         "inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-full",
         "bg-slate-200 text-xs font-medium text-slate-600",
-        className
+        className,
       )}
     >
       {src ? <img src={src} alt={name} className="h-full w-full object-cover" /> : initials}
@@ -288,7 +304,7 @@ export function Tabs({
               "-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors",
               selected
                 ? "border-[var(--brand-primary)] text-slate-900"
-                : "border-transparent text-slate-500 hover:text-slate-800"
+                : "border-transparent text-slate-500 hover:text-slate-800",
             )}
           >
             {tab.label}
@@ -314,7 +330,7 @@ export function Stat({
     <div
       className={cx(
         "rounded-[var(--brand-radius)] border border-slate-200 bg-white p-4",
-        className
+        className,
       )}
     >
       <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
@@ -345,7 +361,7 @@ export function Empty({
       className={cx(
         "flex flex-col items-center justify-center gap-2 rounded-[var(--brand-radius)]",
         "border border-dashed border-slate-300 px-6 py-12 text-center",
-        className
+        className,
       )}
     >
       <p className="text-sm font-medium text-slate-900">{title}</p>

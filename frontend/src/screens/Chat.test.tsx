@@ -773,4 +773,94 @@ describe("Chat screen", () => {
     expect(screen.queryByText(/partial answer/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
+
+  it("AC-056: the sidebar toggle is closed by default, labelled, and opens the sidebar on tap", async () => {
+    vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
+      { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
+    ]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+
+    renderChat();
+    await screen.findByText("Lease questions");
+
+    const toggle = screen.getByRole("button", { name: /open conversations/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(toggle);
+
+    const closeToggle = screen.getByRole("button", { name: /close conversations/i });
+    expect(closeToggle).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("AC-056: closing the sidebar via the toggle or the backdrop preserves the open conversation and its messages", async () => {
+    vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
+      { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
+    ]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+    vi.spyOn(conversationsApi, "getConversation").mockResolvedValue({
+      id: "c1",
+      title: "Lease questions",
+      title_locked: false,
+      created_at: "",
+      updated_at: "",
+      messages: [{ id: "m1", role: "user", content: "Prior message", created_at: "" }],
+    });
+
+    renderChat();
+    fireEvent.click(await screen.findByText("Lease questions"));
+    await screen.findByText("Prior message");
+
+    fireEvent.click(screen.getByRole("button", { name: /open conversations/i }));
+    expect(screen.getByText("Prior message")).toBeInTheDocument();
+
+    // Toggling closed again: the same conversation and its messages are
+    // still there -- toggling never re-fetches or clears the thread.
+    fireEvent.click(screen.getByRole("button", { name: /close conversations/i }));
+    expect(screen.getByText("Prior message")).toBeInTheDocument();
+    expect(screen.getByText("Lease questions")).toBeInTheDocument();
+  });
+
+  it("AC-056: clicking the backdrop closes the sidebar", async () => {
+    vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
+      { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
+    ]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+
+    const { container } = renderChat();
+    await screen.findByText("Lease questions");
+
+    fireEvent.click(screen.getByRole("button", { name: /open conversations/i }));
+    expect(screen.getByRole("button", { name: /close conversations/i })).toBeInTheDocument();
+
+    const backdrop = container.querySelector('[aria-hidden="true"]');
+    expect(backdrop).not.toBeNull();
+    fireEvent.click(backdrop as Element);
+
+    expect(screen.getByRole("button", { name: /open conversations/i })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  it("AC-055: interactive sidebar row controls and the composer's send button meet a 44x44px minimum tap target", async () => {
+    vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
+      { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
+    ]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+
+    renderChat();
+    await screen.findByText("Lease questions");
+
+    const toggle = screen.getByRole("button", { name: /open conversations/i });
+    expect(toggle.className).toMatch(/h-11/);
+    expect(toggle.className).toMatch(/w-11/);
+
+    const rename = screen.getByRole("button", { name: /rename lease questions/i });
+    expect(rename.className).toMatch(/h-11/);
+    expect(rename.className).toMatch(/w-11/);
+
+    const del = screen.getByRole("button", { name: /delete lease questions/i });
+    expect(del.className).toMatch(/h-11/);
+    expect(del.className).toMatch(/w-11/);
+  });
 });

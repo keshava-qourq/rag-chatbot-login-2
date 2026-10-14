@@ -16,7 +16,7 @@ import { type Document, listDocuments } from "@/lib/documents";
 import { Icons } from "@/lib/icons";
 import { Badge, Button, Empty, Textarea } from "@/lib/ui";
 
-const { Plus, Trash, Edit, ArrowRight, AlertCircle, X } = Icons;
+const { Plus, Trash, Edit, ArrowRight, AlertCircle, X, Menu } = Icons;
 
 type ListState = "loading" | "error" | "ready";
 type ThreadState = "idle" | "loading" | "error" | "ready";
@@ -74,7 +74,7 @@ function MessageContent({
 
   return (
     <div className="space-y-2">
-      <p className="whitespace-pre-wrap text-sm leading-relaxed text-[var(--brand-fg)]">
+      <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-[var(--brand-fg)]">
         {parts.map((part, index) => {
           const match = /^\[\[(\d+)\]\]$/.exec(part);
           if (!match) return <React.Fragment key={index}>{part}</React.Fragment>;
@@ -105,10 +105,10 @@ function MessageContent({
             key={citation.id || n}
             className="rounded-[var(--brand-radius)] border border-slate-200 bg-[var(--brand-surface)] p-3 text-xs text-[var(--brand-fg-muted)]"
           >
-            <p className="font-medium text-[var(--brand-fg)]">
+            <p className="break-words font-medium text-[var(--brand-fg)]">
               {documentName} · p.{citation.page}
             </p>
-            <p className="mt-1 italic">&ldquo;{citation.quoted_passage}&rdquo;</p>
+            <p className="mt-1 break-words italic">&ldquo;{citation.quoted_passage}&rdquo;</p>
           </div>
         );
       })}
@@ -134,6 +134,14 @@ export default function Chat() {
   const [renameValue, setRenameValue] = React.useState("");
   const [renameError, setRenameError] = React.useState<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = React.useState<string | null>(null);
+
+  // AC-056: below the `lg` breakpoint the sidebar is an off-canvas overlay,
+  // closed by default, opened and closed purely by the toggle (and the
+  // backdrop click, which is just another way to close it). Nothing here
+  // ties this state to `selectedId` or the thread's own state, so toggling
+  // it never touches which conversation is open or that thread's scroll
+  // position -- the message list and its scroll stay mounted throughout.
+  const [sidebarOpen, setSidebarOpen] = React.useState(false);
 
   const lastQuestionRef = React.useRef("");
   const abortRef = React.useRef<(() => void) | null>(null);
@@ -423,12 +431,31 @@ export default function Chat() {
   };
 
   return (
-    <div className="flex h-full min-h-screen">
+    <div className="flex h-full min-h-screen overflow-x-hidden">
+      {/* AC-056: a tap-dismissible backdrop behind the off-canvas sidebar.
+          Only present below `lg`, where the sidebar is an overlay rather
+          than a permanent column -- at `lg` and above it never renders. */}
+      {sidebarOpen ? (
+        <div
+          aria-hidden="true"
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 z-30 bg-slate-900/40 lg:hidden"
+        />
+      ) : null}
+
       <aside
-        className="flex w-72 shrink-0 flex-col border-r p-4"
+        id="chat-sidebar"
+        className={`fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col overflow-y-auto border-r p-4 transition-transform duration-200 ease-out lg:static lg:z-auto lg:w-72 lg:translate-x-0 ${
+          sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
         style={{ backgroundColor: "var(--brand-surface)", borderColor: "var(--brand-border)" }}
       >
-        <Button type="button" size="sm" onClick={() => void handleNewConversation()}>
+        <Button
+          type="button"
+          size="lg"
+          className="lg:h-8 lg:px-3 lg:text-sm"
+          onClick={() => void handleNewConversation()}
+        >
           <Plus size={14} />
           {"New conversation"}
         </Button>
@@ -473,7 +500,7 @@ export default function Chat() {
                       }}
                       onBlur={() => handleRenameBlur(conversation.id)}
                       onKeyDown={(e) => handleRenameKeyDown(e, conversation.id)}
-                      className="w-full rounded-[var(--brand-radius)] border border-slate-300 px-2 py-1.5 text-sm"
+                      className="min-h-11 w-full rounded-[var(--brand-radius)] border border-slate-300 px-2 py-1.5 text-sm lg:min-h-0"
                     />
                     {renameError ? (
                       <p role="alert" className="mt-1 px-2 text-xs text-red-700">
@@ -490,8 +517,8 @@ export default function Chat() {
                       <Button
                         type="button"
                         variant="danger"
-                        size="sm"
-                        className="h-6 px-2 text-xs"
+                        size="lg"
+                        className="h-11 px-3 text-xs lg:h-6 lg:px-2"
                         onClick={() => void handleConfirmDelete(conversation.id)}
                       >
                         {"Delete"}
@@ -499,8 +526,8 @@ export default function Chat() {
                       <Button
                         type="button"
                         variant="secondary"
-                        size="sm"
-                        className="h-6 px-2 text-xs"
+                        size="lg"
+                        className="h-11 px-3 text-xs lg:h-6 lg:px-2"
                         onClick={handleCancelDelete}
                       >
                         {"Cancel"}
@@ -516,7 +543,7 @@ export default function Chat() {
                     <button
                       type="button"
                       onClick={() => setSelectedId(conversation.id)}
-                      className="min-w-0 flex-1 truncate text-left text-sm text-[var(--brand-fg)]"
+                      className="flex min-h-11 min-w-0 flex-1 items-center truncate text-left text-sm text-[var(--brand-fg)] lg:min-h-0"
                       title={conversation.title}
                     >
                       {conversation.title}
@@ -525,7 +552,7 @@ export default function Chat() {
                       type="button"
                       aria-label={`Rename ${conversation.title}`}
                       onClick={() => handleStartRename(conversation)}
-                      className="shrink-0 text-[var(--brand-fg-muted)] hover:text-[var(--brand-fg)]"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center text-[var(--brand-fg-muted)] hover:text-[var(--brand-fg)] lg:h-6 lg:w-6"
                     >
                       <Edit size={14} />
                     </button>
@@ -533,7 +560,7 @@ export default function Chat() {
                       type="button"
                       aria-label={`Delete ${conversation.title}`}
                       onClick={() => handleRequestDelete(conversation.id)}
-                      className="shrink-0 text-[var(--brand-fg-muted)] hover:text-red-700"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center text-[var(--brand-fg-muted)] hover:text-red-700 lg:h-6 lg:w-6"
                     >
                       <Trash size={14} />
                     </button>
@@ -545,26 +572,42 @@ export default function Chat() {
         ) : null}
       </aside>
 
-      <section className="flex flex-1 flex-col">
+      <section className="flex min-w-0 flex-1 flex-col">
         <header
-          className="flex items-center justify-between border-b px-6 py-4"
+          className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3 lg:px-6 lg:py-4"
           style={{ borderColor: "var(--brand-border)" }}
         >
-          <h1
-            className="text-lg font-semibold text-[var(--brand-fg)]"
-            style={{ fontFamily: "var(--brand-font-heading)" }}
-          >
-            {"Chat"}
-          </h1>
+          <div className="flex items-center gap-2">
+            {/* AC-056: the labelled toggle for the off-canvas sidebar.
+                Only shown below `lg`, where the sidebar is collapsed by
+                default -- at `lg` and above the sidebar is permanently
+                visible and this button never renders. */}
+            <button
+              type="button"
+              aria-expanded={sidebarOpen}
+              aria-controls="chat-sidebar"
+              aria-label={sidebarOpen ? "Close conversations" : "Open conversations"}
+              onClick={() => setSidebarOpen((prev) => !prev)}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--brand-radius)] text-[var(--brand-fg)] hover:bg-[var(--brand-hover)] lg:hidden"
+            >
+              <Menu size={20} />
+            </button>
+            <h1
+              className="text-lg font-semibold text-[var(--brand-fg)]"
+              style={{ fontFamily: "var(--brand-font-heading)" }}
+            >
+              {"Chat"}
+            </h1>
+          </div>
           {documents !== null ? (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Badge variant="success">{`${readyCount} ready`}</Badge>
               <Badge variant="warning">{`${processingCount} processing`}</Badge>
             </div>
           ) : null}
         </header>
 
-        <div className="flex-1 overflow-auto p-6">
+        <div className="flex-1 overflow-auto p-4 lg:p-6">
           {threadState === "loading" ? (
             <p className="text-sm text-[var(--brand-fg-muted)]">{"Loading conversation…"}</p>
           ) : null}
@@ -612,7 +655,7 @@ export default function Chat() {
                 className={message.role === "user" ? "flex justify-end" : "flex justify-start"}
               >
                 <div
-                  className={`max-w-xl rounded-[var(--brand-radius)] px-4 py-3 ${
+                  className={`max-w-[85%] rounded-[var(--brand-radius)] px-4 py-3 lg:max-w-xl ${
                     message.role === "user"
                       ? "bg-[var(--brand-primary)] text-white"
                       : "border border-slate-200 bg-white"
@@ -625,14 +668,14 @@ export default function Chat() {
                       documentNames={documentNames}
                     />
                   ) : (
-                    <p className="whitespace-pre-wrap text-sm">{message.content}</p>
+                    <p className="whitespace-pre-wrap break-words text-sm">{message.content}</p>
                   )}
                 </div>
               </li>
             ))}
             {streamingContent !== null ? (
               <li className="flex justify-start">
-                <div className="max-w-xl rounded-[var(--brand-radius)] border border-slate-200 bg-white px-4 py-3">
+                <div className="max-w-[85%] rounded-[var(--brand-radius)] border border-slate-200 bg-white px-4 py-3 lg:max-w-xl">
                   <MessageContent content={streamingContent} documentNames={documentNames} />
                 </div>
               </li>
@@ -642,18 +685,24 @@ export default function Chat() {
           {sendError ? (
             <div
               role="alert"
-              className="mt-4 flex items-center gap-3 rounded-[var(--brand-radius)] border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+              className="mt-4 flex flex-wrap items-center gap-3 rounded-[var(--brand-radius)] border border-red-200 bg-red-50 p-4 text-sm text-red-700"
             >
               <AlertCircle size={16} className="shrink-0" />
-              <p className="flex-1">{sendError}</p>
-              <Button type="button" variant="secondary" size="sm" onClick={handleRetry}>
+              <p className="min-w-0 flex-1 break-words">{sendError}</p>
+              <Button
+                type="button"
+                variant="secondary"
+                size="lg"
+                className="lg:h-8 lg:px-3 lg:text-sm"
+                onClick={handleRetry}
+              >
                 {"Retry"}
               </Button>
               <button
                 type="button"
                 aria-label="Dismiss error"
                 onClick={handleDismissError}
-                className="shrink-0 text-red-700 hover:text-red-900"
+                className="flex h-11 w-11 shrink-0 items-center justify-center text-red-700 hover:text-red-900 lg:h-6 lg:w-6"
               >
                 <X size={16} />
               </button>
@@ -661,7 +710,7 @@ export default function Chat() {
           ) : null}
         </div>
 
-        <footer className="border-t p-4" style={{ borderColor: "var(--brand-border)" }}>
+        <footer className="border-t p-3 lg:p-4" style={{ borderColor: "var(--brand-border)" }}>
           {noDocumentsAtAll ? (
             <p
               role="status"
@@ -689,10 +738,12 @@ export default function Chat() {
               onKeyDown={handleComposerKeyDown}
               placeholder="Ask a question about your documents…"
               disabled={sending || composerBlocked}
-              className="flex-1"
+              className="min-w-0 flex-1"
             />
             <Button
               type="button"
+              size="lg"
+              className="shrink-0 lg:h-9 lg:px-4 lg:text-sm"
               onClick={() => void handleSend()}
               disabled={sending || composerBlocked || !question.trim()}
             >

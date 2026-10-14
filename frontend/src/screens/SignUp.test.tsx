@@ -89,4 +89,32 @@ describe("SignUp", () => {
     );
     expect(screen.queryByText("Documents screen")).not.toBeInTheDocument();
   });
+
+  it("AC-055: the password-visibility toggle and the bottom 'Log in' link carry a 44px mobile tap-target floor that releases at lg", () => {
+    renderSignUp();
+
+    const toggle = screen.getByRole("button", { name: /show password/i });
+    expect(toggle).toHaveClass("min-h-11");
+    expect(toggle).toHaveClass("lg:min-h-0");
+
+    const loginLink = screen.getByRole("button", { name: /^log in$/i });
+    expect(loginLink).toHaveClass("min-h-11");
+    expect(loginLink).toHaveClass("lg:min-h-0");
+  });
+
+  it("AC-055: the password-rules checkbox grows to a 44x44 floor on mobile and releases it at lg", () => {
+    renderSignUp();
+    const checkbox = screen.getByRole("checkbox");
+    expect(checkbox).toHaveClass("min-h-11");
+    expect(checkbox).toHaveClass("min-w-11");
+    expect(checkbox).toHaveClass("lg:min-h-0");
+    expect(checkbox).toHaveClass("lg:min-w-0");
+  });
+
+  it("AC-055: the form column is a single stacked column before the lg breakpoint, not a fixed-width grid", () => {
+    const { container } = renderSignUp();
+    const grid = container.querySelector(".grid");
+    expect(grid).toHaveClass("grid-cols-1");
+    expect(grid).toHaveClass("lg:grid-cols-[minmax(0,1fr)_19rem]");
+  });
 });

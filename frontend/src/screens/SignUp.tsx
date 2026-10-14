@@ -365,7 +365,7 @@ export default function Screen() {
                         type="button"
                         onClick={() => setShowPassword((v) => !v)}
                         aria-pressed={showPassword}
-                        className="text-sm font-medium underline underline-offset-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+                        className="inline-flex min-h-11 items-center lg:min-h-0 text-sm font-medium underline underline-offset-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
                         style={{ color: brand.primaryColor }}
                       >
                         {showPassword ? "Hide password" : "Show password"}
@@ -555,7 +555,7 @@ export default function Screen() {
                       <button
                         type="button"
                         onClick={() => navigate("login")}
-                        className="font-medium underline underline-offset-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+                        className="inline-flex min-h-11 items-center lg:min-h-0 font-medium underline underline-offset-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
                         style={{ color: brand.primaryColor }}
                       >
                         Log in
