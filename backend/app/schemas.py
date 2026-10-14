@@ -9,7 +9,7 @@ the handlers behind them are still stubs.
 
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 
 
 class StubResponse(BaseModel):
@@ -45,6 +45,16 @@ class UserResponse(BaseModel):
 
 class RenameConversationRequest(BaseModel):
     title: str
+
+    @field_validator("title")
+    @classmethod
+    def _title_must_not_be_blank(cls, value: str) -> str:
+        """AC-050: an empty or whitespace-only title is rejected (422) and
+        must never reach the handler, let alone overwrite a stored title."""
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("title must not be empty or whitespace-only")
+        return stripped
 
 
 class AskQuestionRequest(BaseModel):

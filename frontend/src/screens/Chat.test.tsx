@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "@/lib/api";
 import * as conversationsApi from "@/lib/conversations";
 import * as documentsApi from "@/lib/documents";
 
@@ -48,15 +49,19 @@ function mockDocs(ready: number, processing: number) {
 }
 
 describe("Chat screen", () => {
-  it("loads conversations from GET /conversations and shows document counts from GET /documents", async () => {
+  it("AC-043: loads conversations from GET /conversations and shows document counts from GET /documents, most recently active first as the server returns them", async () => {
     vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
       { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
+      { id: "c2", title: "Older chat", created_at: "", updated_at: "" },
     ]);
     vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(7, 2));
 
     renderChat();
 
     expect(await screen.findByText("Lease questions")).toBeInTheDocument();
+    const items = screen.getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("Lease questions");
+    expect(items[1]).toHaveTextContent("Older chat");
     expect(await screen.findByText("7 ready")).toBeInTheDocument();
     expect(screen.getByText("2 processing")).toBeInTheDocument();
   });
@@ -79,7 +84,7 @@ describe("Chat screen", () => {
     expect(await screen.findByText(/start your first conversation/i)).toBeInTheDocument();
   });
 
-  it("loads a conversation's thread from GET /conversations/{id} when selected", async () => {
+  it("AC-044: loads a conversation's thread from GET /conversations/{id} when selected", async () => {
     vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
       { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
     ]);
@@ -97,6 +102,49 @@ describe("Chat screen", () => {
     fireEvent.click(await screen.findByText("Lease questions"));
 
     expect(await screen.findByText("When does the lease end?")).toBeInTheDocument();
+  });
+
+  it("AC-045: 'New conversation' opens an empty thread and leaves the previous conversation in the sidebar", async () => {
+    vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
+      { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
+    ]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+    vi.spyOn(conversationsApi, "getConversation").mockImplementation(async (id: string) => {
+      if (id === "c1") {
+        return {
+          id: "c1",
+          title: "Lease questions",
+          title_locked: false,
+          created_at: "",
+          updated_at: "",
+          messages: [{ id: "m1", role: "user", content: "Prior message", created_at: "" }],
+        };
+      }
+      return {
+        id,
+        title: "New chat",
+        title_locked: false,
+        created_at: "",
+        updated_at: "",
+        messages: [],
+      };
+    });
+    vi.spyOn(conversationsApi, "createConversation").mockResolvedValue({
+      id: "c2",
+      title: "New chat",
+      created_at: "",
+      updated_at: "",
+    });
+
+    renderChat();
+    fireEvent.click(await screen.findByText("Lease questions"));
+    await screen.findByText("Prior message");
+
+    fireEvent.click(screen.getByRole("button", { name: /new conversation/i }));
+
+    await screen.findByText("New chat");
+    expect(screen.getByText("Lease questions")).toBeInTheDocument();
+    expect(screen.queryByText("Prior message")).not.toBeInTheDocument();
   });
 
   it("AC-038: after reload, GET /conversations/{id} shows the same answer with an expandable citation", async () => {
@@ -206,7 +254,7 @@ describe("Chat screen", () => {
     expect(await screen.findByText(/first passage/i)).toBeInTheDocument();
   });
 
-  it("renames a conversation via PATCH /conversations/{id}", async () => {
+  it("AC-049: renames a conversation via PATCH /conversations/{id} and it appears in the sidebar immediately", async () => {
     vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
       { id: "c1", title: "Old title", created_at: "", updated_at: "" },
     ]);
@@ -229,19 +277,109 @@ describe("Chat screen", () => {
     expect(await screen.findByText("New title")).toBeInTheDocument();
   });
 
-  it("deletes a conversation via DELETE /conversations/{id}", async () => {
+  it("AC-050: submitting an empty rename is rejected, the previous title is retained, and the user sees why", async () => {
+    vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
+      { id: "c1", title: "Old title", created_at: "", updated_at: "" },
+    ]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+    const renameSpy = vi.spyOn(conversationsApi, "renameConversation");
+
+    renderChat();
+    await screen.findByText("Old title");
+    fireEvent.click(screen.getByRole("button", { name: /rename old title/i }));
+    const input = screen.getByLabelText(/rename conversation/i);
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(await screen.findByText(/title can.t be empty/i)).toBeInTheDocument();
+    expect(renameSpy).not.toHaveBeenCalled();
+    // Editor stays open with the previous value available to fix, nothing
+    // was persisted.
+    expect(screen.getByLabelText(/rename conversation/i)).toBeInTheDocument();
+  });
+
+  it("AC-051: a rename refused by the API surfaces an error and the title stays the stored one", async () => {
+    vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
+      { id: "c1", title: "Old title", created_at: "", updated_at: "" },
+    ]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+    vi.spyOn(conversationsApi, "renameConversation").mockRejectedValue(
+      new ApiError(422, { message: "Title is too long." }, "Title is too long."),
+    );
+
+    renderChat();
+    await screen.findByText("Old title");
+    fireEvent.click(screen.getByRole("button", { name: /rename old title/i }));
+    const input = screen.getByLabelText(/rename conversation/i);
+    fireEvent.change(input, { target: { value: "A new attempted title" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(await screen.findByText("Title is too long.")).toBeInTheDocument();
+    expect(await screen.findByText("Old title")).toBeInTheDocument();
+    expect(screen.queryByText("A new attempted title")).not.toBeInTheDocument();
+  });
+
+  it("AC-048: long titles truncate within the sidebar row", async () => {
+    const longTitle =
+      "This is an extremely long conversation title that should truncate instead of wrapping or breaking the sidebar layout";
+    vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
+      { id: "c1", title: longTitle, created_at: "", updated_at: "" },
+    ]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+
+    renderChat();
+    const button = await screen.findByText(longTitle);
+    expect(button.className).toContain("truncate");
+  });
+
+  it("AC-052: delete asks for confirmation; on confirm the conversation disappears and the open thread clears", async () => {
     vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
       { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
     ]);
     vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+    vi.spyOn(conversationsApi, "getConversation").mockResolvedValue({
+      id: "c1",
+      title: "Lease questions",
+      title_locked: false,
+      created_at: "",
+      updated_at: "",
+      messages: [{ id: "m1", role: "user", content: "Prior message", created_at: "" }],
+    });
     const deleteSpy = vi.spyOn(conversationsApi, "deleteConversation").mockResolvedValue(undefined);
 
     renderChat();
-    await screen.findByText("Lease questions");
+    fireEvent.click(await screen.findByText("Lease questions"));
+    await screen.findByText("Prior message");
+
     fireEvent.click(screen.getByRole("button", { name: /delete lease questions/i }));
+    expect(deleteSpy).not.toHaveBeenCalled();
+    expect(await screen.findByText(/delete "lease questions"\?/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
 
     await waitFor(() => expect(deleteSpy).toHaveBeenCalledWith("c1"));
     await waitFor(() => expect(screen.queryByText("Lease questions")).not.toBeInTheDocument());
+    expect(screen.queryByText("Prior message")).not.toBeInTheDocument();
+  });
+
+  it("AC-052: cancelling the delete confirmation leaves the conversation and thread untouched", async () => {
+    vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
+      { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
+    ]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+    const deleteSpy = vi.spyOn(conversationsApi, "deleteConversation");
+
+    renderChat();
+    await screen.findByText("Lease questions");
+
+    fireEvent.click(screen.getByRole("button", { name: /delete lease questions/i }));
+    expect(await screen.findByText(/delete "lease questions"\?/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+
+    expect(screen.queryByText(/delete "lease questions"\?/i)).not.toBeInTheDocument();
+    expect(screen.getByText("Lease questions")).toBeInTheDocument();
+    expect(deleteSpy).not.toHaveBeenCalled();
   });
 
   it("asking a question posts to /conversations/{id}/messages, streams tokens, then renders citations on expand", async () => {
@@ -304,6 +442,56 @@ describe("Chat screen", () => {
     fireEvent.click(screen.getByRole("button", { name: /citation 1/i }));
     expect(await screen.findByText(/six months' prior notice/i)).toBeInTheDocument();
     expect(screen.getByText(/ready-0\.pdf/)).toBeInTheDocument();
+  });
+
+  it("AC-046: a newly auto-titled conversation shows its title in the sidebar after the first answer completes, without a manual reload", async () => {
+    vi.spyOn(conversationsApi, "listConversations")
+      .mockResolvedValueOnce([{ id: "c1", title: "New chat", created_at: "", updated_at: "" }])
+      .mockResolvedValueOnce([
+        {
+          id: "c1",
+          title: "When can we break the lease?",
+          created_at: "",
+          updated_at: "",
+        },
+      ]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+    vi.spyOn(conversationsApi, "getConversation").mockResolvedValue({
+      id: "c1",
+      title: "New chat",
+      title_locked: false,
+      created_at: "",
+      updated_at: "",
+      messages: [],
+    });
+
+    let handlers: conversationsApi.AskQuestionHandlers | undefined;
+    vi.spyOn(conversationsApi, "askQuestion").mockImplementation((_id, _q, h) => {
+      handlers = h;
+      return () => {};
+    });
+
+    renderChat();
+    fireEvent.click(await screen.findByText("New chat"));
+    await screen.findByText(/ask a question about your documents/i);
+
+    const textarea = screen.getByLabelText(/ask a question/i);
+    fireEvent.change(textarea, { target: { value: "When can we break the lease?" } });
+    fireEvent.click(screen.getByRole("button", { name: "" }));
+
+    await waitFor(() => expect(handlers).toBeDefined());
+
+    act(() => {
+      handlers!.onDone({
+        id: "m-final",
+        role: "assistant",
+        content: "Six months notice.",
+        created_at: "",
+        citations: [],
+      });
+    });
+
+    expect(await screen.findByText("When can we break the lease?")).toBeInTheDocument();
   });
 
   it("AC-037/AC-034: tokens appear progressively mid-stream, and an inline marker is hidden -- never shown as raw [[n]] -- until its citation arrives with done", async () => {

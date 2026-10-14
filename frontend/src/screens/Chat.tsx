@@ -120,6 +120,8 @@ export default function Chat() {
   const [question, setQuestion] = React.useState("");
   const [renamingId, setRenamingId] = React.useState<string | null>(null);
   const [renameValue, setRenameValue] = React.useState("");
+  const [renameError, setRenameError] = React.useState<string | null>(null);
+  const [confirmingDeleteId, setConfirmingDeleteId] = React.useState<string | null>(null);
 
   const lastQuestionRef = React.useRef("");
   const abortRef = React.useRef<(() => void) | null>(null);
@@ -186,6 +188,22 @@ export default function Chat() {
     };
   }, []);
 
+  /** Refreshes the sidebar list from the server, in the server's own order
+   * (most recently active first -- AC-043). Used after a turn completes so
+   * an auto-assigned title shows up without a manual reload (AC-046), since
+   * the SSE `done` event only carries the message, never the conversation's
+   * own (possibly just-changed) title. Failures are swallowed: a background
+   * refresh failing must not disrupt a thread the user is already looking
+   * at or the error banner already shown for the turn itself. */
+  const refreshConversationsSilently = React.useCallback(async () => {
+    try {
+      const list = await listConversations();
+      setConversations(list);
+    } catch {
+      // Keep whatever the sidebar already shows.
+    }
+  }, []);
+
   const handleNewConversation = React.useCallback(async () => {
     try {
       const conversation = await createConversation();
@@ -196,8 +214,17 @@ export default function Chat() {
     }
   }, []);
 
-  const handleDelete = React.useCallback(
+  const handleRequestDelete = (id: string) => {
+    setConfirmingDeleteId(id);
+  };
+
+  const handleCancelDelete = () => {
+    setConfirmingDeleteId(null);
+  };
+
+  const handleConfirmDelete = React.useCallback(
     async (id: string) => {
+      setConfirmingDeleteId(null);
       try {
         await deleteConversation(id);
         setConversations((prev) => prev.filter((c) => c.id !== id));
@@ -212,59 +239,98 @@ export default function Chat() {
   const handleStartRename = (conversation: Conversation) => {
     setRenamingId(conversation.id);
     setRenameValue(conversation.title);
+    setRenameError(null);
+  };
+
+  const handleCancelRename = () => {
+    setRenamingId(null);
+    setRenameError(null);
   };
 
   const handleSubmitRename = React.useCallback(
     async (id: string) => {
       const title = renameValue.trim();
+      if (!title) {
+        // AC-050: an empty rename is rejected without touching the stored
+        // title -- the editor stays open with the reason, not silently
+        // closed, so the user knows why nothing happened.
+        setRenameError("Title can't be empty.");
+        return;
+      }
       setRenamingId(null);
-      if (!title) return;
+      setRenameError(null);
       try {
         const updated = await renameConversation(id, title);
         setConversations((prev) => prev.map((c) => (c.id === id ? updated : c)));
       } catch (err) {
+        // AC-051: nothing in the sidebar was changed ahead of this call, so
+        // the title the row already shows is the stored one -- the error
+        // just has to surface, not force a revert.
         setListError(actionErrorMessage(err, "Couldn't rename this conversation."));
       }
     },
     [renameValue],
   );
 
-  const runQuestion = React.useCallback(async (conversationId: string, text: string) => {
-    lastQuestionRef.current = text;
-    setSendError(null);
-    setSending(true);
-    setStreamingContent("");
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `local-${Date.now()}`,
-        role: "user",
-        content: text,
-        created_at: new Date().toISOString(),
-      },
-    ]);
+  const handleRenameKeyDown = (event: React.KeyboardEvent<HTMLInputElement>, id: string) => {
+    if (event.key === "Enter") {
+      void handleSubmitRename(id);
+    } else if (event.key === "Escape") {
+      handleCancelRename();
+    }
+  };
 
-    await new Promise<void>((resolve) => {
-      const abort = askQuestion(conversationId, text, {
-        onToken: (token) => {
-          setStreamingContent((prev) => (prev ?? "") + token);
+  const handleRenameBlur = (id: string) => {
+    if (!renameValue.trim()) {
+      // Blurring away from an empty field cancels quietly rather than
+      // trapping focus on the row -- Enter is the path that surfaces the
+      // "can't be empty" reason.
+      handleCancelRename();
+      return;
+    }
+    void handleSubmitRename(id);
+  };
+
+  const runQuestion = React.useCallback(
+    async (conversationId: string, text: string) => {
+      lastQuestionRef.current = text;
+      setSendError(null);
+      setSending(true);
+      setStreamingContent("");
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `local-${Date.now()}`,
+          role: "user",
+          content: text,
+          created_at: new Date().toISOString(),
         },
-        onDone: (message) => {
-          setMessages((prev) => [...prev, message]);
-          setStreamingContent(null);
-          setSending(false);
-          resolve();
-        },
-        onError: (message) => {
-          setStreamingContent(null);
-          setSending(false);
-          setSendError(message);
-          resolve();
-        },
+      ]);
+
+      await new Promise<void>((resolve) => {
+        const abort = askQuestion(conversationId, text, {
+          onToken: (token) => {
+            setStreamingContent((prev) => (prev ?? "") + token);
+          },
+          onDone: (message) => {
+            setMessages((prev) => [...prev, message]);
+            setStreamingContent(null);
+            setSending(false);
+            void refreshConversationsSilently();
+            resolve();
+          },
+          onError: (message) => {
+            setStreamingContent(null);
+            setSending(false);
+            setSendError(message);
+            resolve();
+          },
+        });
+        abortRef.current = abort;
       });
-      abortRef.current = abort;
-    });
-  }, []);
+    },
+    [refreshConversationsSilently],
+  );
 
   const readyCount = documents?.filter((d) => d.status === "ready").length ?? 0;
   const processingCount =
@@ -349,18 +415,51 @@ export default function Chat() {
             {conversations.map((conversation) => (
               <li key={conversation.id}>
                 {renamingId === conversation.id ? (
-                  <input
-                    autoFocus
-                    aria-label="Rename conversation"
-                    value={renameValue}
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    onBlur={() => void handleSubmitRename(conversation.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") void handleSubmitRename(conversation.id);
-                      if (e.key === "Escape") setRenamingId(null);
-                    }}
-                    className="w-full rounded-[var(--brand-radius)] border border-slate-300 px-2 py-1.5 text-sm"
-                  />
+                  <div>
+                    <input
+                      autoFocus
+                      aria-label="Rename conversation"
+                      value={renameValue}
+                      onChange={(e) => {
+                        setRenameValue(e.target.value);
+                        if (renameError) setRenameError(null);
+                      }}
+                      onBlur={() => handleRenameBlur(conversation.id)}
+                      onKeyDown={(e) => handleRenameKeyDown(e, conversation.id)}
+                      className="w-full rounded-[var(--brand-radius)] border border-slate-300 px-2 py-1.5 text-sm"
+                    />
+                    {renameError ? (
+                      <p role="alert" className="mt-1 px-2 text-xs text-red-700">
+                        {renameError}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : confirmingDeleteId === conversation.id ? (
+                  <div className="rounded-[var(--brand-radius)] border border-red-200 bg-red-50 px-2 py-1.5">
+                    <p className="truncate text-xs text-red-800">
+                      {`Delete "${conversation.title}"?`}
+                    </p>
+                    <div className="mt-1.5 flex gap-2">
+                      <Button
+                        type="button"
+                        variant="danger"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => void handleConfirmDelete(conversation.id)}
+                      >
+                        {"Delete"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        onClick={handleCancelDelete}
+                      >
+                        {"Cancel"}
+                      </Button>
+                    </div>
+                  </div>
                 ) : (
                   <div
                     className={`group flex items-center justify-between gap-1 rounded-[var(--brand-radius)] px-2 py-1.5 ${
@@ -371,6 +470,7 @@ export default function Chat() {
                       type="button"
                       onClick={() => setSelectedId(conversation.id)}
                       className="min-w-0 flex-1 truncate text-left text-sm text-[var(--brand-fg)]"
+                      title={conversation.title}
                     >
                       {conversation.title}
                     </button>
@@ -385,7 +485,7 @@ export default function Chat() {
                     <button
                       type="button"
                       aria-label={`Delete ${conversation.title}`}
-                      onClick={() => void handleDelete(conversation.id)}
+                      onClick={() => handleRequestDelete(conversation.id)}
                       className="shrink-0 text-[var(--brand-fg-muted)] hover:text-red-700"
                     >
                       <Trash size={14} />
