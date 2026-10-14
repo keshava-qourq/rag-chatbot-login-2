@@ -4,10 +4,12 @@ List, create, load, rename and delete are plain CRUD over `Conversation`,
 `Message` and `Citation` rows, always filtered by the caller's `user_id` so
 a conversation id that belongs to another account is indistinguishable from
 one that does not exist (404 either way). `POST /conversations/{id}/messages`
-is the grounded-ask endpoint: retrieve the caller's own ready chunks, prompt
-Gemini with those chunks and the question only, stream the answer
-token-by-token over SSE, and persist the user message, the assistant message
-and its citations only once the stream has completed without error.
+is the grounded-ask endpoint: resolve the question against the same
+conversation's recent history (US-013-1), retrieve the caller's own ready
+chunks for the *resolved* question, prompt Gemini with those chunks and the
+resolved question only, stream the answer token-by-token over SSE, and
+persist the user message, the assistant message and its citations only once
+the stream has completed without error.
 
 The model is never called when there is nothing worth answering from: a
 caller with zero documents, or one whose relevant chunks (after the
@@ -36,7 +38,7 @@ from sqlalchemy.orm import Session as DBSession
 from sqlalchemy.orm import selectinload
 
 from app.database import SessionLocal, get_db
-from app.gemini_client import GeminiProviderError, chat_stream, embed
+from app.gemini_client import GeminiProviderError, chat, chat_stream, embed
 from app.ingestion import get_ready_chunks
 from app.models import Chunk, Citation, Conversation, Message, User
 from app.models import Document as DocumentModel
@@ -66,6 +68,13 @@ _CurrentUserDependency = Depends(get_current_user)
 TOP_K_CHUNKS = 6
 SIMILARITY_THRESHOLD = 0.2
 
+# AC-040/US-013-1: how many of the conversation's most recent messages (user
+# and assistant turns combined) are offered to the history-resolution call
+# as context for rewriting a follow-up into a standalone question. Fixed and
+# small -- this is not a full-history summarizer, just enough to resolve a
+# pronoun or an implicit reference to the immediately preceding turn(s).
+HISTORY_RESOLUTION_MAX_MESSAGES = 6
+
 # How much of a cited chunk's own text is quoted back in a citation -- a
 # fixed, deterministic cap so the same chunk always produces the same
 # `quoted_passage` (AC-035).
@@ -86,6 +95,21 @@ SYSTEM_PROMPT = (
     "anything you already know. If the excerpts do not actually answer the "
     "question, reply exactly: "
     '"I could not find the answer in your documents." and cite nothing.'
+)
+
+# US-013-1: the instruction sent to the chat model for history resolution.
+# Its only job is to rewrite a follow-up into a standalone question --
+# never to answer it -- so it never touches retrieval, grounding or
+# citations itself; those run exactly as they do for a first question,
+# against whatever question this step produces (or the raw question, on
+# any failure).
+HISTORY_RESOLUTION_PROMPT = (
+    "Rewrite the user's latest message as a single standalone question that "
+    "does not depend on the conversation history below -- resolve any "
+    "pronoun or implicit reference (e.g. 'it', 'that', 'the last one') "
+    "using that history. If the latest message is already standalone, "
+    "output it unchanged. Output ONLY the rewritten question, with no "
+    "preamble, quotes or explanation."
 )
 
 # AC-031/AC-032: shown instead of calling the model at all when the caller's
@@ -288,6 +312,68 @@ def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
+def _fetch_recent_history(
+    db: DBSession, conversation_id: uuid.UUID, user_id: uuid.UUID
+) -> list[Message]:
+    """Up to `HISTORY_RESOLUTION_MAX_MESSAGES` of this conversation's most
+    recent messages, oldest first.
+
+    Filtered by both `conversation_id` and `user_id` (AC-042): a brand-new
+    conversation has no rows matching that pair regardless of how much
+    history the same user has in any other conversation, so this can never
+    leak another conversation's turns into resolution.
+    """
+    rows = (
+        db.execute(
+            select(Message)
+            .where(Message.conversation_id == conversation_id, Message.user_id == user_id)
+            .order_by(Message.created_at.desc())
+            .limit(HISTORY_RESOLUTION_MAX_MESSAGES)
+        )
+        .scalars()
+        .all()
+    )
+    return list(reversed(rows))
+
+
+def resolve_follow_up_question(
+    db: DBSession, conversation_id: uuid.UUID, user_id: uuid.UUID, question: str
+) -> str:
+    """`question`, rewritten to a standalone form using this conversation's
+    recent history when it contains a pronoun or an implicit reference
+    (AC-040) -- a module-level seam tests patch directly to run
+    deterministically without a network call.
+
+    Returns `question` unchanged when there is no history yet (nothing to
+    resolve against), and falls back to it on any provider failure or an
+    empty/unusable rewrite (constraint: a resolution failure must never
+    become an un-grounded answer, only the raw question going into the
+    normal, grounded retrieval path).
+    """
+    history = _fetch_recent_history(db, conversation_id, user_id)
+    if not history:
+        return question
+
+    history_text = "\n".join(f"{m.role}: {m.content}" for m in history)
+    prompt = [
+        {
+            "role": "user",
+            "content": (
+                f"{HISTORY_RESOLUTION_PROMPT}\n\n"
+                f"Conversation history:\n{history_text}\n\n"
+                f"Latest message: {question}"
+            ),
+        }
+    ]
+    try:
+        resolved = chat(prompt)
+    except GeminiProviderError:
+        return question
+
+    resolved = resolved.strip()
+    return resolved if resolved else question
+
+
 def _retrieve_relevant_chunks(db: DBSession, user_id: uuid.UUID, question: str) -> list[Chunk]:
     """The caller's own chunks, from ready documents only, most relevant to
     `question` first, restricted to those scoring at or above
@@ -296,7 +382,9 @@ def _retrieve_relevant_chunks(db: DBSession, user_id: uuid.UUID, question: str) 
     `get_ready_chunks` (built for US-009-1) already restricts the candidate
     set to this user's chunks on documents whose status is `ready`; this
     function only ranks and thresholds that set, it does not reimplement
-    the ownership or readiness filtering.
+    the ownership or readiness filtering. Callers pass the already-resolved
+    question (US-013-1) so a follow-up retrieves against its intended
+    subject, not its literal pronoun.
     """
     candidates = get_ready_chunks(db, user_id)
     if not candidates:
@@ -323,7 +411,9 @@ def _build_prompt(question: str, chunks: list[Chunk]) -> list[Mapping[str, str]]
     Only called once `chunks` is known to be non-empty -- AC-032 requires
     the model is never invoked with an empty-excerpt prompt that would let
     it supply a free, outside-knowledge answer; that case is handled by
-    `REFUSAL_MESSAGE` before this is reached.
+    `REFUSAL_MESSAGE` before this is reached. `question` is the already
+    resolved, standalone form (US-013-1) so the model answering alongside
+    the excerpts sees the same subject retrieval was run against.
     """
     excerpts = "\n\n".join(
         f"[[{index}]] (page {chunk.page}): {chunk.content}"
@@ -409,7 +499,10 @@ async def _persist_fixed_reply(
     citations and no model call, then stream it exactly as `token`
     events would for a real answer -- used by every refusal path
     (AC-031, AC-032, AC-033) so the client sees one consistent shape
-    regardless of why the model was not called.
+    regardless of why the model was not called. `question` here is always
+    the user's original, literal text -- never the history-resolved
+    rewrite -- so what gets persisted (and later offered back as history
+    context) is what the user actually typed.
     """
     user_message = Message(
         conversation_id=conversation.id, user_id=user_id, role="user", content=question
@@ -440,6 +533,14 @@ async def _stream_answer(
     successfully (or a refusal path is taken deliberately); a provider
     failure at any point yields an `error` event and leaves no trace of
     this turn.
+
+    `question` is always the user's raw, literal text -- it is what gets
+    persisted as the user message. Before retrieval runs, it is resolved
+    (US-013-1, AC-040) against this conversation's own recent history into
+    a standalone form that retrieval and the final chat prompt both use
+    instead, so a follow-up like "what about the second one?" retrieves and
+    is answered against its intended subject while the stored turn still
+    reads exactly as the user wrote it.
     """
     db = SessionLocal()
     try:
@@ -477,8 +578,10 @@ async def _stream_answer(
                 yield event
             return
 
+        resolved_question = resolve_follow_up_question(db, conversation_id, user_id, question)
+
         try:
-            relevant_chunks = _retrieve_relevant_chunks(db, user_id, question)
+            relevant_chunks = _retrieve_relevant_chunks(db, user_id, resolved_question)
         except GeminiProviderError:
             yield _sse("error", {"message": _RETRIEVAL_ERROR_MESSAGE})
             return
@@ -492,7 +595,7 @@ async def _stream_answer(
                 yield event
             return
 
-        messages = _build_prompt(question, relevant_chunks)
+        messages = _build_prompt(resolved_question, relevant_chunks)
 
         collected: list[str] = []
         try:
