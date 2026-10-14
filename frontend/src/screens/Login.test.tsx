@@ -69,6 +69,52 @@ describe("Login", () => {
     expect(screen.queryByText("Documents screen")).not.toBeInTheDocument();
   });
 
+  it("recognises the real backend's generic 401 body nested under `detail`, not a flat `message`", async () => {
+    // `app.routers.auth.login` actually raises
+    // `HTTPException(detail="email or password is incorrect")`, which
+    // FastAPI serialises as `{"detail": "email or password is incorrect"}`
+    // -- not the flat `{"message": ...}` body the test above uses. A
+    // regression that made `parseAuthError` stop reading a string `detail`
+    // would still pass that test while breaking this exact real response.
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({ detail: "email or password is incorrect" }),
+    });
+    const user = userEvent.setup();
+    renderLogin();
+    await user.type(screen.getByLabelText(/email address/i), "person@example.com");
+    await user.type(screen.getByLabelText(/^password$/i), "wrong-password");
+    await user.click(screen.getByRole("button", { name: /^log in$/i }));
+
+    expect(await screen.findByText("email or password is incorrect")).toBeInTheDocument();
+    expect(screen.queryByText("Documents screen")).not.toBeInTheDocument();
+  });
+
+  it("shows the service-unavailable banner, not the credentials banner, when the request never reaches the server", async () => {
+    // A network failure rejects `fetch` itself, a different branch of
+    // `submit`'s catch than the 401 (`ApiError`) cases above -- the
+    // password must not be blamed for a connectivity failure.
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new TypeError("Failed to fetch"),
+    );
+    const user = userEvent.setup();
+    renderLogin();
+    await user.type(screen.getByLabelText(/email address/i), "person@example.com");
+    await user.type(screen.getByLabelText(/^password$/i), "Password123");
+    await user.click(screen.getByRole("button", { name: /^log in$/i }));
+
+    await expect(
+      screen.findByText(/we couldn.t reach the sign-in service/i),
+    ).resolves.toBeInTheDocument();
+    expect(
+      screen.queryByText("The email or password is incorrect."),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Documents screen")).not.toBeInTheDocument();
+    // What was typed survives the failure.
+    expect(screen.getByLabelText(/email address/i)).toHaveValue("person@example.com");
+  });
+
   it("AC-055: the password-visibility toggle and 'Create an account' link carry a 44px mobile tap-target floor that releases at lg", () => {
     renderLogin();
 

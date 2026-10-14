@@ -209,6 +209,28 @@ def test_empty_or_whitespace_only_rename_is_rejected(title: str) -> None:
     assert detail["title_locked"] is False
 
 
+def test_rename_with_surrounding_whitespace_stores_the_trimmed_title() -> None:
+    """`schemas.RenameConversationRequest`'s validator returns `value.strip()`
+    for a title that is non-blank once trimmed -- not merely a title that
+    passes validation unchanged. A regression that validated but no longer
+    trimmed (or that trimmed only for the blank-rejection check, discarding
+    the stripped value) would still reject the two parametrized all-
+    whitespace cases above while silently storing leading/trailing
+    whitespace a user never intended to type as part of the title."""
+    client = signed_up_client()
+    conversation_id = create_conversation(client)
+
+    response = client.patch(
+        f"/conversations/{conversation_id}", json={"title": "  Lease terms  \n"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["title"] == "Lease terms"
+
+    detail = client.get(f"/conversations/{conversation_id}").json()
+    assert detail["title"] == "Lease terms"
+
+
 # ---------------------------------------------------------------------------
 # Cross-account rename and delete return 404.
 # ---------------------------------------------------------------------------

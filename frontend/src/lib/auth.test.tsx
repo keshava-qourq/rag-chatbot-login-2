@@ -55,4 +55,39 @@ describe("auth client", () => {
     const err = new ApiError(401, { message: "The email or password is incorrect." }, "fallback");
     expect(parseAuthError(err)).toEqual({ message: "The email or password is incorrect." });
   });
+
+  // The real backend never sends a flat `{field, message}` body: FastAPI
+  // wraps every `HTTPException(detail=...)` under a top-level `detail` key
+  // (see `app.routers.auth.signup`'s 409/422 raises, which pass
+  // `detail={"field": ..., "message": ...}`, and `app.main`'s own default
+  // exception handling, which wraps a plain string the same way). The two
+  // tests above only prove `parseAuthError` can read the flat shape it is
+  // never actually given -- if the nested-`detail` branch were ever
+  // deleted, both would still pass while the real signup/login screens
+  // broke. These assert the shape the backend actually sends.
+  it("parses a per-field error nested under the real backend's `detail` key", () => {
+    const err = new ApiError(
+      409,
+      { detail: { field: "email", message: "An account with this email already exists." } },
+      "fallback",
+    );
+    expect(parseAuthError(err)).toEqual({
+      field: "email",
+      message: "An account with this email already exists.",
+    });
+  });
+
+  it("parses the real backend's plain-string `detail` (login's generic 401) with no field", () => {
+    const err = new ApiError(401, { detail: "email or password is incorrect" }, "fallback");
+    expect(parseAuthError(err)).toEqual({ message: "email or password is incorrect" });
+  });
+
+  it("ignores an unrecognized field value nested under `detail`, carrying only the message", () => {
+    const err = new ApiError(
+      422,
+      { detail: { field: "not-a-real-field", message: "Something about the payload." } },
+      "fallback",
+    );
+    expect(parseAuthError(err)).toEqual({ message: "Something about the payload." });
+  });
 });

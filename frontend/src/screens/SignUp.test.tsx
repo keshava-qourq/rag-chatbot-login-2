@@ -90,6 +90,61 @@ describe("SignUp", () => {
     expect(screen.queryByText("Documents screen")).not.toBeInTheDocument();
   });
 
+  it("recognises the real backend's per-field error nested under `detail` on a 409 duplicate email", async () => {
+    // Unlike the two tests above (which exercise a flat `{field, message}`
+    // body), `app.routers.auth.signup` actually raises
+    // `HTTPException(detail={"field": "email", "message": ...})`, which
+    // FastAPI serialises as `{"detail": {"field": ..., "message": ...}}`.
+    // A regression that made this screen (via `parseAuthError`) stop
+    // reading the nested shape would still pass the flat-body tests above
+    // while breaking this exact, real response.
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        detail: { field: "email", message: "An account with this email already exists." },
+      }),
+    });
+    const user = userEvent.setup();
+    renderSignUp();
+    await fillValidForm(user);
+    await user.click(screen.getByRole("button", { name: /create account/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.getAllByText("An account with this email already exists.").length,
+      ).toBeGreaterThan(0),
+    );
+    expect(screen.queryByText("Documents screen")).not.toBeInTheDocument();
+    // A field-specific error, not the generic service-unavailable banner.
+    expect(screen.queryByText(/sign-up service unavailable/i)).not.toBeInTheDocument();
+  });
+
+  it("shows the generic service-unavailable banner (not a field error) when the request never reaches the server", async () => {
+    // A network failure (DNS, connection refused, CORS) rejects `fetch`
+    // itself rather than resolving with a non-2xx response -- a different
+    // code path through `handleSubmit` than every `ApiError` case above.
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new TypeError("Failed to fetch"),
+    );
+    const user = userEvent.setup();
+    renderSignUp();
+    await fillValidForm(user);
+    await user.click(screen.getByRole("button", { name: /create account/i }));
+
+    await expect(
+      screen.findByText(/sign-up service unavailable/i),
+    ).resolves.toBeInTheDocument();
+    expect(
+      screen.getByText(/we could not reach the sign-up service/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Documents screen")).not.toBeInTheDocument();
+
+    // The user's input survives the failure -- nothing was cleared, so
+    // retrying does not mean retyping.
+    expect(screen.getByLabelText(/email address/i)).toHaveValue(VALID.email);
+  });
+
   it("AC-055: the password-visibility toggle and the bottom 'Log in' link carry a 44px mobile tap-target floor that releases at lg", () => {
     renderSignUp();
 

@@ -102,6 +102,45 @@ def test_signup_rejects_duplicate_email_with_field_specific_message() -> None:
         db.close()
 
 
+# ---------------------------------------------------------------------------
+# `schemas.SignupRequest`/`LoginRequest` declare `email: EmailStr` -- this is
+# the pydantic-level validation contract the two routes depend on. Nothing
+# in this module previously exercised a malformed email on either route: a
+# regression dropping `EmailStr` back to a bare `str` would make every test
+# above still pass (they all use a real, well-formed address) while letting
+# an unparseable value reach the database.
+# ---------------------------------------------------------------------------
+
+
+def test_signup_rejects_a_malformed_email_with_422_and_creates_no_account() -> None:
+    client = new_client()
+
+    response = client.post(
+        "/auth/signup", json={"email": "not-an-email", "password": STRONG_PASSWORD}
+    )
+
+    assert response.status_code == 422
+
+    db = SessionLocal()
+    try:
+        assert db.query(User).filter(User.email == "not-an-email").one_or_none() is None
+    finally:
+        db.close()
+
+
+def test_login_rejects_a_malformed_email_with_422_rather_than_a_generic_401() -> None:
+    client = new_client()
+
+    response = client.post(
+        "/auth/login", json={"email": "also-not-an-email", "password": STRONG_PASSWORD}
+    )
+
+    # A malformed email is a request-shape error, not a credentials check --
+    # it must never reach `get_current_user`'s/`login`'s own 401 path, which
+    # would wrongly suggest the account lookup itself ran.
+    assert response.status_code == 422
+
+
 def test_password_is_never_stored_in_plaintext() -> None:
     client = new_client()
     email = unique_email()
