@@ -40,7 +40,10 @@ const TOKENS = {
 const UPLOAD_LIMITS = [
   { label: "File types", value: "PDF, Word, Markdown, TXT" },
   { label: "Largest file", value: "25 MB" },
-  { label: "Pages per file", value: "300" },
+  // Matches the backend's actual default (`MAX_UPLOAD_PAGES`, see
+  // `app.routers.documents`) and the same figure quoted on the
+  // Getting-started screen -- these must agree, since it's the same limit.
+  { label: "Pages per file", value: "500" },
 ];
 
 const NEXT_STEPS = [
@@ -58,10 +61,16 @@ const NEXT_STEPS = [
   },
 ];
 
+// Matches the backend's actual policy exactly (`app.security.PASSWORD_RULES`
+// / `validate_password_strength`): at least 8 characters, an uppercase
+// letter, a lowercase letter and a number. A looser or differently-worded
+// checklist here would let this screen show "all rules met" for a password
+// the server still rejects.
 const PASSWORD_RULES = [
-  { id: "len", label: "At least 10 characters", test: (v: string) => v.length >= 10 },
+  { id: "len", label: "At least 8 characters", test: (v: string) => v.length >= 8 },
+  { id: "upper", label: "Contains an uppercase letter", test: (v: string) => /[A-Z]/.test(v) },
+  { id: "lower", label: "Contains a lowercase letter", test: (v: string) => /[a-z]/.test(v) },
   { id: "num", label: "Contains a number", test: (v: string) => /\d/.test(v) },
-  { id: "letter", label: "Contains a letter", test: (v: string) => /[a-zA-Z]/.test(v) },
 ];
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -110,7 +119,7 @@ export default function Screen() {
 
     if (!form.password) next.password = "Choose a password for your account.";
     else if (PASSWORD_RULES.some((r) => !r.test(form.password)))
-      next.password = "Your password does not meet all three rules below yet.";
+      next.password = "Your password does not meet all the rules below yet.";
 
     if (!form.confirm) next.confirm = "Type your password a second time so we know it is right.";
     else if (form.confirm !== form.password) next.confirm = "The two passwords do not match.";
@@ -406,11 +415,14 @@ export default function Screen() {
                         <span
                           className="text-xs font-semibold"
                           style={{
-                            color: metCount === 3 ? brand.accentColor : brand.neutralColor,
+                            color:
+                              metCount === PASSWORD_RULES.length
+                                ? brand.accentColor
+                                : brand.neutralColor,
                             fontVariantNumeric: "tabular-nums",
                           }}
                         >
-                          {metCount} of 3 met
+                          {metCount} of {PASSWORD_RULES.length} met
                         </span>
                       </div>
                       <ul className="mt-2.5 space-y-2">

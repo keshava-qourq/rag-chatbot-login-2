@@ -1,28 +1,13 @@
 """Pydantic request and response models.
 
-One pair per entity in the approved data model, plus the placeholder every
-generated route returns until it has been implemented. Request bodies are
-typed accurately against the approved API spec so the OpenAPI document --
-and anything generated from it -- already describes the real contract;
-the handlers behind them are still stubs.
+One pair per entity in the approved data model. Every route in
+`app.routers` is fully implemented against these shapes -- there is no
+remaining stub endpoint and so no placeholder response model here either.
 """
 
 from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, field_validator
-
-
-class StubResponse(BaseModel):
-    """What a generated route returns until someone implements it.
-
-    A stub that returns a typed body rather than raising keeps the service
-    startable and its OpenAPI document complete, so the frontend can be built
-    against the agreed shape while the handlers are still being written.
-    """
-
-    endpoint: str
-    status: str = "not_implemented"
-    detail: str = "Scaffolded from the approved API spec; no behaviour yet."
 
 
 class SignupRequest(BaseModel):

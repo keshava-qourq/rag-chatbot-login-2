@@ -20,6 +20,12 @@ const Input = UI.Input as unknown as React.ForwardRefExoticComponent<
 
 const REDIRECT_TARGET = { label: "Document library", route: "documents" };
 
+// Matches `app.security.SESSION_TTL` (14 days) exactly -- the session
+// cookie's lifetime is fixed server-side and does not vary with the
+// "keep me signed in" checkbox, so the copy below states the one real
+// duration rather than branching on a choice that has no actual effect.
+const SESSION_COOKIE_DAYS = 14;
+
 const ASSURANCES = [
   {
     title: "Private to this account",
@@ -69,7 +75,6 @@ export default function Screen() {
   const [banner, setBanner] = React.useState<Banner>(null);
   const [status, setStatus] = React.useState<"idle" | "submitting" | "success">("idle");
   const [helpOpen, setHelpOpen] = React.useState(false);
-  const [noticeOpen, setNoticeOpen] = React.useState(true);
 
   const busy = React.useRef(false);
   const emailRef = React.useRef<HTMLInputElement>(null);
@@ -190,41 +195,6 @@ export default function Screen() {
         <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_21rem] lg:gap-8 items-start">
           {/* ---------- Primary: the sign-in form ---------- */}
           <main>
-            {noticeOpen && !done ? (
-              <div
-                className="lg-rise mb-5 flex items-start gap-3 border px-4 py-3.5 sm:px-5"
-                style={{
-                  ...panel,
-                  borderColor: hexToRgba(brand.primaryColor, 0.28),
-                  backgroundColor: hexToRgba(brand.primaryColor, 0.07),
-                }}
-              >
-                <Icons.Clock
-                  className="mt-0.5 h-4 w-4 shrink-0"
-                  aria-hidden="true"
-                  style={{ color: brand.primaryColor }}
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold" style={{ color: "#1A2433" }}>
-                    Your session expired, so we stopped at the door
-                  </p>
-                  <p className="mt-1 text-sm leading-relaxed" style={{ color: muted }}>
-                    You were heading to the {REDIRECT_TARGET.label}. Log in and we’ll take you
-                    straight there — nothing was lost.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setNoticeOpen(false)}
-                  aria-label="Dismiss session expiry notice"
-                  className="lg-soft -mr-1 -mt-1 inline-flex min-h-11 min-w-11 items-center justify-center rounded p-1.5 hover:opacity-70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 lg:min-h-0 lg:min-w-0"
-                  style={{ color: brand.neutralColor, outlineColor: brand.primaryColor }}
-                >
-                  <Icons.X className="h-4 w-4" aria-hidden="true" />
-                </button>
-              </div>
-            ) : null}
-
             <section
               className="relative overflow-hidden border bg-white shadow-sm"
               style={panel}
@@ -275,10 +245,8 @@ export default function Screen() {
                           Signed in — opening your {REDIRECT_TARGET.label.toLowerCase()}
                         </p>
                         <p className="mt-1 text-sm" style={{ color: muted }}>
-                          Welcome back, {email.trim()}. Your session cookie is set{" "}
-                          {remember
-                            ? "for 30 days on this browser."
-                            : "until you close this browser."}
+                          Welcome back, {email.trim()}. Your session cookie is set for{" "}
+                          {SESSION_COOKIE_DAYS} days on this browser.
                         </p>
                       </div>
                     </div>
@@ -489,7 +457,7 @@ export default function Screen() {
                         }}
                       />
                       <Label htmlFor="login-remember" className="text-sm font-normal">
-                        Keep me signed in on this browser for 30 days
+                        {`Keep me signed in on this browser for ${SESSION_COOKIE_DAYS} days`}
                       </Label>
                     </div>
                   </div>
