@@ -36,8 +36,7 @@ function actionErrorMessage(err: unknown, fallback: string): string {
  * copy is what every failure path renders, with no branch on the
  * underlying message text.
  */
-const ASSISTANT_UNAVAILABLE_MESSAGE =
-  "The assistant is temporarily unavailable. Please try again.";
+const ASSISTANT_UNAVAILABLE_MESSAGE = "The assistant is temporarily unavailable. Please try again.";
 
 /** Splits an assistant message's content on `[[n]]` markers and renders the
  * matching citation as an expandable chip inline, so the quoted passage
@@ -173,8 +172,16 @@ export default function Chat() {
   }, []);
 
   React.useEffect(() => {
+    // Clear whatever the previously selected conversation's thread showed
+    // the moment `selectedId` changes -- synchronously, in the same effect
+    // pass, before the fetch for the newly selected (or no) conversation
+    // resolves. Waiting for that fetch to clear the old `messages` would
+    // leave the prior thread rendered for a beat (or, if the fetch never
+    // settles, indefinitely) after the user has already switched away from
+    // it, whether by selecting another conversation, starting a new one,
+    // or deleting the one that was open.
+    setMessages([]);
     if (!selectedId) {
-      setMessages([]);
       setThreadState("idle");
       return;
     }
@@ -241,7 +248,16 @@ export default function Chat() {
       try {
         await deleteConversation(id);
         setConversations((prev) => prev.filter((c) => c.id !== id));
-        if (selectedId === id) setSelectedId(null);
+        if (selectedId === id) {
+          // AC-052: clear the open thread in the same pass as deselecting
+          // it -- the selectedId-driven effect also clears `messages` on
+          // this transition, but doing it here too means the deleted
+          // conversation's messages are never left rendered even for a
+          // beat after the row is gone.
+          setSelectedId(null);
+          setMessages([]);
+          setThreadState("idle");
+        }
       } catch (err) {
         setListError(actionErrorMessage(err, "Couldn't delete this conversation."));
       }
