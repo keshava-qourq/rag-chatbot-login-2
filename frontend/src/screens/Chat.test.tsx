@@ -306,6 +306,72 @@ describe("Chat screen", () => {
     expect(screen.getByText(/ready-0\.pdf/)).toBeInTheDocument();
   });
 
+  it("AC-037/AC-034: tokens appear progressively mid-stream, and an inline marker is hidden -- never shown as raw [[n]] -- until its citation arrives with done", async () => {
+    vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
+      { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },
+    ]);
+    vi.spyOn(documentsApi, "listDocuments").mockResolvedValue(mockDocs(1, 0));
+    vi.spyOn(conversationsApi, "getConversation").mockResolvedValue({
+      id: "c1",
+      title: "Lease questions",
+      title_locked: false,
+      created_at: "",
+      updated_at: "",
+      messages: [],
+    });
+
+    let handlers: conversationsApi.AskQuestionHandlers | undefined;
+    vi.spyOn(conversationsApi, "askQuestion").mockImplementation((_id, _q, h) => {
+      handlers = h;
+      return () => {};
+    });
+
+    renderChat();
+    fireEvent.click(await screen.findByText("Lease questions"));
+    await screen.findByText(/ask a question about your documents/i);
+
+    const textarea = screen.getByLabelText(/ask a question/i);
+    fireEvent.change(textarea, { target: { value: "When can we break the lease?" } });
+    fireEvent.click(screen.getByRole("button", { name: "" }));
+
+    await waitFor(() => expect(handlers).toBeDefined());
+
+    act(() => {
+      handlers!.onToken("Six months");
+    });
+    expect(await screen.findByText(/^six months$/i)).toBeInTheDocument();
+
+    act(() => {
+      handlers!.onToken(" notice [[1]]");
+    });
+
+    expect(await screen.findByText(/six months notice/i)).toBeInTheDocument();
+    expect(screen.queryByText(/\[\[1\]\]/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /citation 1/i })).not.toBeInTheDocument();
+
+    act(() => {
+      handlers!.onDone({
+        id: "m-final",
+        role: "assistant",
+        content: "Six months notice [[1]]",
+        created_at: "",
+        citations: [
+          {
+            id: "cit-1",
+            n: 1,
+            document_id: "r0",
+            document: "ready-0.pdf",
+            page: 14,
+            quoted_passage: "Six months' prior notice.",
+          },
+        ],
+      });
+    });
+
+    expect(await screen.findByRole("button", { name: /citation 1/i })).toBeInTheDocument();
+    expect(screen.queryByText(/\[\[1\]\]/)).not.toBeInTheDocument();
+  });
+
   it("AC-031/032: a 'not in your documents' answer renders as a normal message with no citation chips or retry banner", async () => {
     vi.spyOn(conversationsApi, "listConversations").mockResolvedValue([
       { id: "c1", title: "Lease questions", created_at: "", updated_at: "" },

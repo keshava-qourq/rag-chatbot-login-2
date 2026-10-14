@@ -34,7 +34,14 @@ function actionErrorMessage(err: unknown, fallback: string): string {
  * reordered marker still resolves correctly, including after a reload. The
  * document name comes from the citation's own `document` field when the API
  * supplies it, falling back to `documentNames` (keyed by `document_id`)
- * only when it does not. */
+ * only when it does not.
+ *
+ * Also reused for the in-flight streaming bubble, before `citations` is
+ * known (the SSE client only hands citation data to the caller once via the
+ * `done` event's assembled message). A marker whose citation isn't known
+ * yet -- or never resolves -- is hidden rather than left as raw `[[n]]`
+ * text, so the user never sees the bracket syntax, whether mid-stream or in
+ * the completed message. */
 function MessageContent({
   content,
   citations,
@@ -61,7 +68,7 @@ function MessageContent({
           if (!match) return <React.Fragment key={index}>{part}</React.Fragment>;
           const n = Number(match[1]);
           const citation = byNumber.get(n);
-          if (!citation) return <React.Fragment key={index}>{part}</React.Fragment>;
+          if (!citation) return null;
           const documentName = resolveDocumentName(citation);
           return (
             <button
@@ -479,9 +486,7 @@ export default function Chat() {
             {streamingContent !== null ? (
               <li className="flex justify-start">
                 <div className="max-w-xl rounded-[var(--brand-radius)] border border-slate-200 bg-white px-4 py-3">
-                  <p className="whitespace-pre-wrap text-sm text-[var(--brand-fg)]">
-                    {streamingContent}
-                  </p>
+                  <MessageContent content={streamingContent} documentNames={documentNames} />
                 </div>
               </li>
             ) : null}

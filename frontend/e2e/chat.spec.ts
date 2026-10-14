@@ -220,6 +220,101 @@ test.describe("Chat answer experience", () => {
     await expect(page.getByText(/p\.14/)).toBeVisible();
   });
 
+  test("AC-040/AC-041: a follow-up question is answered in context and its answer renders citations exactly as a first question does", async ({
+    page,
+  }) => {
+    // History already contains a first question-and-answer pair, with its
+    // own citation, exactly as GET /conversations/{id} would return it --
+    // this is the context the follow-up must be answered against.
+    await stubConversationList(page, [CONVERSATION]);
+    await stubConversationDetail(page, "c1", {
+      ...CONVERSATION,
+      messages: [
+        {
+          id: "m1",
+          role: "user",
+          content: "Tell me about the Eiffel Tower.",
+          created_at: "2026-01-05T00:00:00Z",
+        },
+        {
+          id: "m2",
+          role: "assistant",
+          content: "The Eiffel Tower is in Paris. [[1]]",
+          created_at: "2026-01-05T00:00:01Z",
+          citations: [
+            {
+              id: "cit-1",
+              n: 1,
+              document_id: "doc-1",
+              document: "lease-agreement.pdf",
+              page: 14,
+              quoted_passage: "Located in Paris, France.",
+            },
+          ],
+        },
+      ],
+    });
+    await stubDocumentList(page, [READY_DOCUMENT]);
+    await stubDocumentEvents(page);
+
+    await stubAskQuestion(page, "c1", () => ({
+      body:
+        sseEvent("token", { token: "It is 330 metres tall. [[1]]" }) +
+        sseEvent("citations", {
+          citations: [
+            {
+              id: "cit-2",
+              n: 1,
+              document_id: "doc-1",
+              document: "lease-agreement.pdf",
+              page: 20,
+              quoted_passage: "Standing 330 metres tall.",
+            },
+          ],
+        }) +
+        sseEvent("done", {
+          message: {
+            id: "m3",
+            role: "assistant",
+            content: "It is 330 metres tall. [[1]]",
+            created_at: "2026-01-05T00:00:02Z",
+            citations: [
+              {
+                id: "cit-2",
+                n: 1,
+                document_id: "doc-1",
+                document: "lease-agreement.pdf",
+                page: 20,
+                quoted_passage: "Standing 330 metres tall.",
+              },
+            ],
+          },
+        }),
+    }));
+
+    await openChatAndSelectConversation(page);
+
+    // The first turn, loaded from history, is visible in context before the
+    // follow-up is even asked.
+    await expect(page.getByText(/the eiffel tower is in paris/i)).toBeVisible();
+
+    await page.getByLabel(/ask a question/i).fill("How tall is it?");
+    await page.getByRole("button", { name: "" }).click();
+
+    await expect(page.getByText(/it is 330 metres tall/i)).toBeVisible();
+
+    // Both turns' citation markers render and expand the same way: one
+    // "citation 1" button per turn (each turn's own `n` numbering, resolved
+    // independently), and the follow-up's own citation shows its own page
+    // and quoted passage -- not the first turn's.
+    const citationButtons = page.getByRole("button", { name: /citation 1/i });
+    await expect(citationButtons).toHaveCount(2);
+
+    await citationButtons.nth(1).click();
+    await expect(page.getByText(/standing 330 metres tall/i)).toBeVisible();
+    await expect(page.getByText(/p\.20/)).toBeVisible();
+  });
+
   test("AC-038: after a page reload the answer and its citations are still present in the thread", async ({
     page,
   }) => {
@@ -321,7 +416,9 @@ test.describe("Chat answer experience", () => {
     expect(requestedQuestions).toEqual(["What happened?", "What happened?"]);
   });
 
-  test("AC-031: a refusal answer renders with no citation chips", async ({ page }) => {
+  test("AC-031/AC-032: a general-knowledge question with no matching document shows the refusal message with no citation chips", async ({
+    page,
+  }) => {
     await stubConversationList(page, [CONVERSATION]);
     await stubConversationDetail(page, "c1", { ...CONVERSATION, messages: [] });
     await stubDocumentList(page, [READY_DOCUMENT]);
