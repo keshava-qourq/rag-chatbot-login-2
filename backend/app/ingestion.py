@@ -6,10 +6,11 @@ a document id it:
 
 1. Loads the `Document` row and moves its status `queued` -> `processing`,
    committing that transition on its own so it is observable immediately.
-2. Fetches the stored file from S3 and extracts text -- per PDF page, per
-   DOCX document (python-docx exposes no page boundaries, so the whole
-   document is one unit), or per Markdown/plain-text section (split on
-   top-level Markdown headers; a file with none is one section).
+2. Fetches the stored file (S3 or local disk, see `app.storage`) and
+   extracts text -- per PDF page, per DOCX document (python-docx exposes no
+   page boundaries, so the whole document is one unit), or per
+   Markdown/plain-text section (split on top-level Markdown headers; a file
+   with none is one section).
 3. Chunks each extracted unit with overlap, embeds every chunk in one
    `app.gemini_client.embed` call, and persists the resulting `Chunk` rows
    in their own commit.
@@ -34,19 +35,19 @@ import asyncio
 import io
 import json
 import logging
-import os
 import re
 import uuid
 
-import boto3
 from docx import Document as DocxDocument
 from pypdf import PdfReader
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DBSession
 
+from app import storage
 from app.database import SessionLocal, engine
 from app.gemini_client import embed
 from app.models import Chunk, Document
+from app.storage import StorageError
 
 logger = logging.getLogger("app.ingestion")
 
@@ -89,22 +90,11 @@ def _embedding_value(vector: list[float]) -> object:
     return json.dumps(vector) if _IS_SQLITE else vector
 
 
-def _s3_client():
-    return boto3.client("s3", endpoint_url=os.getenv("S3_ENDPOINT_URL") or None)
-
-
-def _fetch_from_s3(key: str) -> bytes:
-    bucket = os.getenv("S3_BUCKET")
-    if not bucket:
-        raise IngestionError("S3_BUCKET is not configured.")
-    client = _s3_client()
+def _fetch_file(key: str) -> bytes:
     try:
-        response = client.get_object(Bucket=bucket, Key=key)
-        return response["Body"].read()
-    except IngestionError:
-        raise
-    except Exception as exc:  # pragma: no cover - boto3 raises many types
-        raise IngestionError(f"failed to fetch {key!r} from S3: {exc}") from exc
+        return storage.read_file(key)
+    except StorageError as exc:
+        raise IngestionError(str(exc)) from exc
 
 
 def _extract_pdf(data: bytes) -> list[tuple[str, int]]:
@@ -305,7 +295,7 @@ def _classify_failure(exc: Exception) -> str:
         return _NO_TEXT_MESSAGE
     if "failed to embed" in message or "embedding returned" in message:
         return _PROVIDER_UNAVAILABLE_MESSAGE
-    if "failed to fetch" in message or "s3_bucket is not configured" in message:
+    if "failed to fetch" in message:
         detail = _root_message(exc).split(":", 1)[0].strip()
         if detail:
             return f"{_STORAGE_UNAVAILABLE_MESSAGE} ({detail})"
@@ -330,7 +320,7 @@ def _mark_failed(session: DBSession, document_id: str, exc: Exception) -> None:
 
 def _ingest(session: DBSession, document: Document) -> None:
     try:
-        data = _fetch_from_s3(document.s3_key)
+        data = _fetch_file(document.s3_key)
     except Exception as exc:
         raise IngestionError(f"failed to fetch document from storage: {exc}") from exc
 
@@ -371,7 +361,7 @@ async def process_document(ctx: dict, document_id: str) -> None:
     Registered under this exact name in `app.worker.WorkerSettings.functions`
     so `app.routers.documents`'s enqueue call (by
     `app.routers.documents.INGESTION_JOB_NAME`) resolves to it. All of the
-    actual work is synchronous (DB, S3, Gemini), so it runs on a worker
+    actual work is synchronous (DB, storage, Gemini), so it runs on a worker
     thread rather than blocking arq's event loop.
 
     A document deleted after being enqueued (or while this job is running)

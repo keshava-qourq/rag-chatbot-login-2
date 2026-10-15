@@ -57,13 +57,13 @@ def txt_file(name: str = "notes.txt", content: bytes = b"hello world") -> tuple:
 
 @pytest.fixture(autouse=True)
 def stub_s3_store(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(documents_module, "_store_in_s3", lambda key, data, content_type: None)
+    monkeypatch.setattr(documents_module, "_store_file", lambda key, data, content_type: None)
 
 
 @pytest.fixture
 def stub_s3_delete(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     calls: list[str] = []
-    monkeypatch.setattr(documents_module, "_delete_from_s3", lambda key: calls.append(key))
+    monkeypatch.setattr(documents_module, "_delete_file", lambda key: calls.append(key))
     return calls
 
 
@@ -87,7 +87,7 @@ def process_to_ready(
     monkeypatch: pytest.MonkeyPatch,
     content: bytes = b"hello world, some real content to chunk and embed.",
 ) -> None:
-    monkeypatch.setattr(ingestion_module, "_fetch_from_s3", lambda key: content)
+    monkeypatch.setattr(ingestion_module, "_fetch_file", lambda key: content)
     asyncio.run(ingestion_module.process_document({}, document_id))
 
 
@@ -209,7 +209,7 @@ def test_failed_ingestion_exposes_plain_language_failure_reason_via_api(
     def boom(key: str) -> bytes:
         raise ingestion_module.IngestionError(raw_exception_text)
 
-    monkeypatch.setattr(ingestion_module, "_fetch_from_s3", boom)
+    monkeypatch.setattr(ingestion_module, "_fetch_file", boom)
 
     asyncio.run(ingestion_module.process_document({}, document_id))
 

@@ -1,7 +1,7 @@
 """Behavioural tests for the arq ingestion job and its retrieval helper.
 
 Gemini and S3 are stubbed in every test here: `app.ingestion.embed` and
-`app.ingestion._fetch_from_s3` are monkeypatched so no real network call is
+`app.ingestion._fetch_file` are monkeypatched so no real network call is
 ever made, matching how `tests/test_documents.py` stubs S3 for the upload
 endpoint.
 """
@@ -80,7 +80,7 @@ def stub_embed(monkeypatch: pytest.MonkeyPatch):
 
 
 def stub_s3(monkeypatch: pytest.MonkeyPatch, data: bytes) -> None:
-    monkeypatch.setattr(ingestion, "_fetch_from_s3", lambda key: data)
+    monkeypatch.setattr(ingestion, "_fetch_file", lambda key: data)
 
 
 def _decoded_embedding(raw: object) -> list[float]:
@@ -103,7 +103,7 @@ def test_process_document_moves_plain_text_document_to_ready() -> None:
 
         import app.ingestion as mod
 
-        mod._fetch_from_s3 = lambda key: stub_s3_data  # type: ignore[assignment]
+        mod._fetch_file = lambda key: stub_s3_data  # type: ignore[assignment]
 
         asyncio.run(ingestion.process_document({}, str(document.id)))
 
@@ -131,7 +131,7 @@ def test_persisted_chunks_have_non_empty_content_and_768_dim_embedding(
         document = create_user_and_document(session, mime_type=TXT_MIME)
         monkeypatch.setattr(
             ingestion,
-            "_fetch_from_s3",
+            "_fetch_file",
             lambda key: b"hello world, this is a small plain text document.",
         )
 
@@ -155,7 +155,7 @@ def test_document_passes_through_processing_before_reaching_ready(
     try:
         document = create_user_and_document(session, mime_type=TXT_MIME)
         monkeypatch.setattr(
-            ingestion, "_fetch_from_s3", lambda key: b"some text content here for chunking"
+            ingestion, "_fetch_file", lambda key: b"some text content here for chunking"
         )
 
         observed: dict[str, str] = {}
@@ -191,7 +191,7 @@ def test_process_document_sets_failed_and_failure_reason_on_s3_error(
         def boom(key):
             raise ingestion.IngestionError("S3 is down")
 
-        monkeypatch.setattr(ingestion, "_fetch_from_s3", boom)
+        monkeypatch.setattr(ingestion, "_fetch_file", boom)
 
         asyncio.run(ingestion.process_document({}, str(document.id)))
 
@@ -213,7 +213,7 @@ def test_process_document_sets_failed_on_embedding_error(
     session = SessionLocal()
     try:
         document = create_user_and_document(session, mime_type=TXT_MIME)
-        monkeypatch.setattr(ingestion, "_fetch_from_s3", lambda key: b"some text content here")
+        monkeypatch.setattr(ingestion, "_fetch_file", lambda key: b"some text content here")
 
         def failing_embed(texts, *, correlation_id=None):
             raise RuntimeError("provider outage")
@@ -253,7 +253,7 @@ def test_pdf_chunks_carry_their_source_page_number(
     try:
         document = create_user_and_document(session, mime_type=PDF_MIME)
         pdf_bytes = make_pdf_bytes(2)
-        monkeypatch.setattr(ingestion, "_fetch_from_s3", lambda key: pdf_bytes)
+        monkeypatch.setattr(ingestion, "_fetch_file", lambda key: pdf_bytes)
 
         # Blank pages extract no text, so patch extract_text per page to
         # return distinguishable content instead of exercising pypdf's
@@ -290,7 +290,7 @@ def test_docx_chunks_carry_document_id_and_page_one(
     try:
         document = create_user_and_document(session, mime_type=DOCX_MIME)
         docx_bytes = make_docx_bytes(["first paragraph " * 50, "second paragraph " * 50])
-        monkeypatch.setattr(ingestion, "_fetch_from_s3", lambda key: docx_bytes)
+        monkeypatch.setattr(ingestion, "_fetch_file", lambda key: docx_bytes)
 
         asyncio.run(ingestion.process_document({}, str(document.id)))
 
@@ -325,7 +325,7 @@ def test_markdown_document_chunks_carry_section_ordinal(
             + "\n# Section Two\n"
             + ("beta content word " * 100)
         )
-        monkeypatch.setattr(ingestion, "_fetch_from_s3", lambda key: text.encode("utf-8"))
+        monkeypatch.setattr(ingestion, "_fetch_file", lambda key: text.encode("utf-8"))
 
         asyncio.run(ingestion.process_document({}, str(document.id)))
 
@@ -368,7 +368,7 @@ def test_chunk_index_is_monotonically_increasing_per_document() -> None:
 
         import app.ingestion as mod
 
-        mod._fetch_from_s3 = lambda key: session_patcher_data  # type: ignore[assignment]
+        mod._fetch_file = lambda key: session_patcher_data  # type: ignore[assignment]
 
         asyncio.run(ingestion.process_document({}, str(document.id)))
 

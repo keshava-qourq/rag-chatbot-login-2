@@ -1,7 +1,7 @@
 """Behavioural tests for document upload, listing, status-stream, delete and
 retry.
 
-S3 storage (`_store_in_s3`) is stubbed for every test in this module so no
+S3 storage (`_store_file`) is stubbed for every test in this module so no
 real S3/boto3 call is ever made. The arq job queue needs no separate stub:
 `REDIS_URL` is unset in this test configuration, so
 `app.worker._redis_settings()` returns `None` and `_enqueue_ingestion`
@@ -48,7 +48,7 @@ def stub_s3(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, bytes, str]]:
     def fake_store(key: str, data: bytes, content_type: str) -> None:
         stored.append((key, data, content_type))
 
-    monkeypatch.setattr(documents_module, "_store_in_s3", fake_store)
+    monkeypatch.setattr(documents_module, "_store_file", fake_store)
     return stored
 
 
