@@ -50,7 +50,7 @@ def no_saved_key(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.fixture(autouse=True)
 def stub_s3_store(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(documents_module, "_store_in_s3", lambda key, data, content_type: None)
+    monkeypatch.setattr(documents_module, "_store_file", lambda key, data, content_type: None)
 
 
 class _FakeModels:
@@ -259,7 +259,7 @@ def test_ingestion_without_any_key_fails_with_a_settings_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.setattr(ingestion_module, "_fetch_from_s3", lambda key: b"The sky is blue.")
+    monkeypatch.setattr(ingestion_module, "_fetch_file", lambda key: b"The sky is blue.")
     client, _ = signed_up_client()
     document_id = _upload(client)
 
@@ -276,7 +276,7 @@ def test_asking_without_any_key_explains_how_to_fix_it_and_persists_nothing(
 ) -> None:
     client, _ = signed_up_client()
     document_id = _upload(client)
-    monkeypatch.setattr(ingestion_module, "_fetch_from_s3", lambda key: b"The sky is blue.")
+    monkeypatch.setattr(ingestion_module, "_fetch_file", lambda key: b"The sky is blue.")
     monkeypatch.setattr(ingestion_module, "embed", lambda texts, **_: [[1.0] * 768 for _ in texts])
     asyncio.run(ingestion_module.process_document({}, document_id))
 
