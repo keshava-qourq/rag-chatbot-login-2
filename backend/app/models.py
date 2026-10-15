@@ -1,8 +1,9 @@
 """SQLAlchemy models for the approved data model.
 
 One class per entity: users, sessions, documents, chunks, conversations,
-messages, citations. Ownership columns (`user_id`) sit directly on every
-table that holds account-private data, per the architecture note that
+messages, citations, plus the app-wide `app_settings`. Ownership columns
+(`user_id`) sit directly on every table that holds account-private data,
+per the architecture note that
 per-account isolation is enforced by filtering on them.
 
 Two Postgres-only types appear here -- `citext` for case-insensitive email
@@ -215,6 +216,33 @@ class Citation(Base):
     document: Mapped["Document"] = relationship()
 
 
+class AppSetting(Base):
+    """One app-wide setting, shared by every account.
+
+    Today that is only the Gemini API key entered on the Settings page (see
+    `app.routers.settings`). Deliberately not account-private: there is one
+    key for the whole app, so there is no `user_id` ownership column --
+    `updated_by_user_id` only records who last changed the value.
+    """
+
+    __tablename__ = "app_settings"
+
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=_utcnow,
+        server_default=func.now(),
+        onupdate=_utcnow,
+        nullable=False,
+    )
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    updated_by: Mapped["User | None"] = relationship()
+
+
 __all__ = [
     "Base",
     "User",
@@ -224,4 +252,5 @@ __all__ = [
     "Conversation",
     "Message",
     "Citation",
+    "AppSetting",
 ]

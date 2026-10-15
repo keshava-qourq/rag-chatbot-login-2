@@ -5,6 +5,10 @@ or chat call in this codebase goes through `embed`, `chat` and `chat_stream`
 here -- this is the only module that imports the `google-genai` SDK, so
 there is exactly one place that enforces the required configuration, retries
 a flaky call behind a hard timeout, and redacts what reaches the logs.
+
+The API key is entered on the app's Settings page and stored in
+`app_settings` (see `app.routers.settings`); `GEMINI_API_KEY` in the
+environment is only a fallback for when no key has been saved there.
 """
 
 from __future__ import annotations
@@ -18,9 +22,17 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.database import SessionLocal
+from app.models import AppSetting
 
 GEMINI_API_KEY_VAR = "GEMINI_API_KEY"
+
+# The `app_settings.name` the Settings page stores the key under.
+GEMINI_API_KEY_SETTING = "gemini_api_key"
 
 # Documented defaults: the current generally-available Gemini embedding and
 # chat models, read fresh from the environment on every call so a change to
@@ -43,11 +55,16 @@ _executor = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_pre
 
 
 class GeminiConfigurationError(RuntimeError):
-    """Raised when a required Gemini environment variable is missing.
+    """Raised when a Gemini call is attempted with no API key configured.
 
-    Raised at app import time (via `get_config` in `app.main`) so the app
-    fails to start rather than serving requests it cannot fulfil.
+    The app starts without a key (it is entered on the Settings page after
+    sign-in), so callers check `is_configured()` before reaching for the
+    model and show a "set a key" message instead of hitting this.
     """
+
+
+class GeminiKeyRejectedError(RuntimeError):
+    """Raised by `verify_api_key` when Gemini refuses a candidate key."""
 
 
 class GeminiProviderError(RuntimeError):
@@ -69,19 +86,41 @@ class GeminiConfig:
     max_retries: int
 
 
-def get_config() -> GeminiConfig:
-    """Resolve configuration from the environment, or raise a clear error.
+def _stored_api_key() -> str | None:
+    """The key saved on the Settings page, or None when there is none.
 
-    Raising here -- rather than returning a half-configured object -- is what
-    lets `app.main` fail fast at import time when `GEMINI_API_KEY` is unset.
+    Read fresh on every call, not cached: the API and the arq worker are
+    separate processes, and a key saved through one must take effect in the
+    other without a restart. A primary-key lookup is negligible next to the
+    Gemini call it precedes.
     """
-    api_key = os.getenv(GEMINI_API_KEY_VAR)
-    if not api_key:
-        raise GeminiConfigurationError(
-            f"{GEMINI_API_KEY_VAR} is not set. Google Gemini is the only configured "
-            "model provider, so the app cannot start without it. See "
-            "backend/docs/gemini.md for the required credential and how to verify it."
-        )
+    try:
+        with SessionLocal() as session:
+            setting = session.get(AppSetting, GEMINI_API_KEY_SETTING)
+            return setting.value if setting is not None else None
+    except SQLAlchemyError:
+        # e.g. the table does not exist yet in a process that never ran
+        # `create_all`. Treated as "nothing saved" so the environment
+        # fallback still applies.
+        logger.warning("could not read the stored Gemini API key")
+        return None
+
+
+def resolve_api_key() -> tuple[str | None, str | None]:
+    """`(key, source)`: the Settings-page key first, then `GEMINI_API_KEY`.
+
+    `source` is `"app"`, `"environment"`, or None when neither is set.
+    """
+    stored = _stored_api_key()
+    if stored:
+        return stored, "app"
+    env_key = os.getenv(GEMINI_API_KEY_VAR)
+    if env_key:
+        return env_key, "environment"
+    return None, None
+
+
+def _config_for(api_key: str) -> GeminiConfig:
     return GeminiConfig(
         api_key=api_key,
         embedding_model=os.getenv("GEMINI_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
@@ -91,13 +130,37 @@ def get_config() -> GeminiConfig:
     )
 
 
+def get_config() -> GeminiConfig:
+    """Resolve the configuration for one call, or raise a clear error.
+
+    Raising here -- rather than returning a half-configured object -- means
+    no call ever reaches the SDK without a key.
+    """
+    api_key, _source = resolve_api_key()
+    if not api_key:
+        raise GeminiConfigurationError(
+            "No Gemini API key is configured. Add one on the Settings page "
+            f"(or set {GEMINI_API_KEY_VAR} as a fallback). See backend/docs/gemini.md."
+        )
+    return _config_for(api_key)
+
+
+def is_configured() -> bool:
+    """Whether any Gemini API key is available for the next call."""
+    api_key, _source = resolve_api_key()
+    return bool(api_key)
+
+
 def gemini_status() -> dict[str, object]:
-    """What `/health` reports: whether Gemini is configured, and with what."""
-    if not os.getenv(GEMINI_API_KEY_VAR):
-        return {"configured": False}
-    config = get_config()
+    """Whether Gemini is configured, where the key comes from, and the models.
+
+    Never includes the key itself.
+    """
+    api_key, source = resolve_api_key()
+    config = _config_for(api_key or "")
     return {
-        "configured": True,
+        "configured": bool(api_key),
+        "source": source,
         "embedding_model": config.embedding_model,
         "chat_model": config.chat_model,
     }
@@ -193,6 +256,31 @@ def _call_with_timeout(fn, timeout: float, *args, **kwargs):
         return future.result(timeout=timeout)
     except concurrent.futures.TimeoutError as exc:
         raise TimeoutError(f"Gemini call exceeded its {timeout}s timeout") from exc
+
+
+# HTTP statuses that mean Gemini looked at the key and said no. Anything else
+# (a 404 for a misnamed model, a 429, a 5xx, a network error) says nothing
+# about the key, so it is reported as "could not verify" instead.
+_KEY_REJECTED_STATUSES = {400, 401, 403}
+
+
+def verify_api_key(api_key: str) -> None:
+    """Confirm Gemini accepts `api_key` before the Settings page saves it.
+
+    One metadata lookup of the configured chat model -- no tokens are
+    generated or billed. Raises `GeminiKeyRejectedError` when Gemini refuses
+    the key, and `GeminiProviderError` when it cannot be reached at all.
+    """
+    config = _config_for(api_key)
+    client = _get_client(config)
+    try:
+        _call_with_timeout(client.models.get, config.timeout_seconds, model=config.chat_model)
+    except genai_errors.ClientError as exc:
+        if exc.code in _KEY_REJECTED_STATUSES:
+            raise GeminiKeyRejectedError(f"Gemini rejected the API key ({exc.code})") from exc
+        raise GeminiProviderError(f"could not verify the API key ({exc.code})") from exc
+    except Exception as exc:  # noqa: BLE001 -- normalised to GeminiProviderError
+        raise GeminiProviderError("could not reach Gemini to verify the API key") from exc
 
 
 def embed(texts: Sequence[str], *, correlation_id: str | None = None) -> list[list[float]]:
@@ -387,6 +475,7 @@ def chat_stream(
 
 __all__ = [
     "GEMINI_API_KEY_VAR",
+    "GEMINI_API_KEY_SETTING",
     "DEFAULT_EMBEDDING_MODEL",
     "DEFAULT_CHAT_MODEL",
     "DEFAULT_MAX_RETRIES",
@@ -394,10 +483,14 @@ __all__ = [
     "EMBEDDING_OUTPUT_DIMENSIONALITY",
     "GeminiConfig",
     "GeminiConfigurationError",
+    "GeminiKeyRejectedError",
     "GeminiProviderError",
     "RedactPayloadFilter",
     "get_config",
     "gemini_status",
+    "is_configured",
+    "resolve_api_key",
+    "verify_api_key",
     "embed",
     "chat",
     "chat_stream",

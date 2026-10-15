@@ -14,14 +14,12 @@ from sqlalchemy import text
 
 from app import models  # noqa: F401 -- imported so the tables register before create_all
 from app.database import Base, engine
-from app.gemini_client import get_config as _require_gemini_configured
 from app.routers import routers
 from app.services import configured_services
 
-# Google Gemini is the only configured model provider. A deployment missing
-# this credential must not serve a single request, so this raises before the
-# `FastAPI` instance -- let alone a route -- exists.
-_require_gemini_configured()
+# The app starts without a Gemini API key: it is entered on the Settings page
+# after sign-in (see `app.routers.settings`). Until then, uploads fail with a
+# "set a key" reason and chat answers with the same instruction.
 
 app = FastAPI(
     title="RAG Chatbot Login (2)",

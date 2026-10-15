@@ -45,7 +45,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from app import storage
 from app.database import SessionLocal, engine
-from app.gemini_client import embed
+from app.gemini_client import GeminiConfigurationError, embed
 from app.models import Chunk, Document
 from app.storage import StorageError
 
@@ -73,6 +73,7 @@ _IS_SQLITE = engine.dialect.name == "sqlite"
 # AC-024 -- a user sees one of these, never a raw exception string.
 _NO_TEXT_MESSAGE = "No readable text found in this file."
 _PROVIDER_UNAVAILABLE_MESSAGE = "Processing service unavailable - try again."
+_NOT_CONFIGURED_MESSAGE = "No Gemini API key is set - add one on the Settings page, then retry."
 _STORAGE_UNAVAILABLE_MESSAGE = "Could not retrieve the file - try again."
 _GENERIC_MESSAGE = "Something went wrong while processing this file - try again."
 
@@ -211,6 +212,8 @@ def _build_chunks(document: Document, mime_type: str, data: bytes) -> list[Chunk
     texts = [piece for piece, _ in pending]
     try:
         embeddings = embed(texts)
+    except GeminiConfigurationError as exc:
+        raise IngestionError("gemini api key is not configured") from exc
     except Exception as exc:
         raise IngestionError(f"failed to embed document chunks: {exc}") from exc
 
@@ -293,6 +296,8 @@ def _classify_failure(exc: Exception) -> str:
         or "unsupported mime type" in message
     ):
         return _NO_TEXT_MESSAGE
+    if "gemini api key is not configured" in message:
+        return _NOT_CONFIGURED_MESSAGE
     if "failed to embed" in message or "embedding returned" in message:
         return _PROVIDER_UNAVAILABLE_MESSAGE
     if "failed to fetch" in message:

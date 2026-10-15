@@ -54,7 +54,7 @@ from sqlalchemy.orm import Session as DBSession
 from sqlalchemy.orm import selectinload
 
 from app.database import SessionLocal, get_db
-from app.gemini_client import GeminiProviderError, chat, chat_stream, embed
+from app.gemini_client import GeminiProviderError, chat, chat_stream, embed, is_configured
 from app.ingestion import get_ready_chunks
 from app.models import Chunk, Citation, Conversation, Message, User
 from app.models import Document as DocumentModel
@@ -159,6 +159,13 @@ PROCESSING_MESSAGE = (
 # state for a resubmission to collide with.
 ASSISTANT_UNAVAILABLE_MESSAGE = (
     "The assistant is temporarily unavailable. Please try again in a moment."
+)
+
+# Shown instead of calling the model when no Gemini API key has been saved
+# on the Settings page (and there is no `GEMINI_API_KEY` fallback). Unlike
+# the message above, retrying will not help until someone adds a key.
+NOT_CONFIGURED_MESSAGE = (
+    "The assistant isn't set up yet. Add a Gemini API key on the Settings page, then ask again."
 )
 
 # Kept as aliases of the one fixed message above: a stream-open/mid-stream
@@ -634,6 +641,13 @@ async def _stream_answer(
                 db, conversation, user_id, question, PROCESSING_MESSAGE, is_first_question
             ):
                 yield event
+            return
+
+        if not is_configured():
+            # No Gemini API key saved yet: every step from here needs the
+            # model, so say how to fix it rather than "try again" -- and,
+            # like a provider failure, persist nothing.
+            yield _sse("error", {"message": NOT_CONFIGURED_MESSAGE})
             return
 
         resolved_question = resolve_follow_up_question(db, conversation_id, user_id, question)

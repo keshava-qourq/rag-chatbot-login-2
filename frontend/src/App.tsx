@@ -6,6 +6,7 @@ import Login from "@/screens/Login";
 import Documents from "@/screens/Documents";
 import Chat from "@/screens/Chat";
 import GettingStarted from "@/screens/GettingStarted";
+import Settings from "@/screens/Settings";
 import { AuthProvider, logout, useAuth } from "@/lib/auth";
 import { useNavigate } from "@/lib/navigate";
 
@@ -79,6 +80,9 @@ function Shell() {
             <NavLink to="/getting-started" className={navLinkClass}>
               {"Getting started"}
             </NavLink>
+            <NavLink to="/settings" className={navLinkClass}>
+              {"Settings"}
+            </NavLink>
           </nav>
         </div>
         <LogoutControl />
@@ -90,6 +94,7 @@ function Shell() {
           <Route path="/documents" element={<Documents />} />
           <Route path="/chat" element={<Chat />} />
           <Route path="/getting-started" element={<GettingStarted />} />
+          <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/sign-up" replace />} />
         </Routes>
       </main>

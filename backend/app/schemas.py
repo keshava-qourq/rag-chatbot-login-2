@@ -6,6 +6,7 @@ remaining stub endpoint and so no placeholder response model here either.
 """
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, field_validator
 
@@ -111,3 +112,36 @@ class ConversationDetailResponse(ConversationResponse):
     message, in the order they were sent, each with its own citations."""
 
     messages: list[MessageResponse] = []
+
+
+class GeminiKeyRequest(BaseModel):
+    """PUT /settings/gemini: the Gemini API key to save for the whole app."""
+
+    api_key: str
+
+    @field_validator("api_key")
+    @classmethod
+    def _api_key_must_not_be_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("api_key must not be empty or whitespace-only")
+        return stripped
+
+
+class GeminiSettingsResponse(BaseModel):
+    """What GET/PUT/DELETE /settings/gemini return. Never the key itself.
+
+    `source` is where the key in effect comes from: `"app"` (saved on the
+    Settings page), `"environment"` (the `GEMINI_API_KEY` fallback), or
+    None when no key is set. `key_hint` is its last four characters only.
+    `updated_at`/`updated_by` describe the Settings-page key and are None
+    unless `source` is `"app"`.
+    """
+
+    configured: bool
+    source: Literal["app", "environment"] | None
+    key_hint: str | None
+    updated_at: datetime | None
+    updated_by: str | None
+    chat_model: str
+    embedding_model: str

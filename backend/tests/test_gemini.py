@@ -117,23 +117,33 @@ def test_env_vars_override_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_gemini_status_reflects_configuration_state(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    assert gemini_status() == {"configured": False}
+    status = gemini_status()
+    assert status["configured"] is False
+    assert status["source"] is None
 
     monkeypatch.setenv("GEMINI_API_KEY", "a-key")
     status = gemini_status()
     assert status["configured"] is True
+    assert status["source"] == "environment"
     assert status["embedding_model"] == DEFAULT_EMBEDDING_MODEL
     assert status["chat_model"] == DEFAULT_CHAT_MODEL
+    assert "a-key" not in str(status)
 
 
-def test_app_does_not_start_without_gemini_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The service refuses to come up at all, rather than serving half-configured."""
+def test_app_starts_without_gemini_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The key is entered on the Settings page after sign-in, so the service
+    has to come up -- and serve the sign-in and settings routes -- without
+    one; /health reports Gemini as not configured until then."""
+    from fastapi.testclient import TestClient
+
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     sys.modules.pop("app.main", None)
 
     try:
-        with pytest.raises(GeminiConfigurationError, match="GEMINI_API_KEY"):
-            importlib.import_module("app.main")
+        main = importlib.import_module("app.main")
+        response = TestClient(main.app).get("/health")
+        assert response.status_code == 200
+        assert response.json()["services"]["gemini"] is False
     finally:
         # Leave sys.modules sane for any test collected after this one.
         sys.modules.pop("app.main", None)

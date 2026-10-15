@@ -6,10 +6,9 @@ value for the two Redis entries comes from docker-compose.yml through
 actually reach. S3 has no local container -- it is always the real AWS
 service -- so its readiness is purely whether the product owner has set the
 bucket env var yet. `gemini` reports whether the only configured model
-provider has its credential set; the app refuses to start without it (see
-`app.gemini_client.get_config`, called from `app.main` at import time), so in
-a running deployment this is always true, but the check stays here so
-`/health` names the provider explicitly.
+provider has an API key -- saved on the Settings page or, as a fallback, set
+as `GEMINI_API_KEY` (see `app.gemini_client.resolve_api_key`). It is false
+on a fresh deployment until someone saves a key.
 """
 
 import os
