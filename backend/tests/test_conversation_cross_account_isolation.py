@@ -57,7 +57,7 @@ def txt_file(name: str, content: bytes) -> tuple:
 
 @pytest.fixture(autouse=True)
 def stub_s3_store(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(documents_module, "_store_in_s3", lambda key, data, content_type: None)
+    monkeypatch.setattr(documents_module, "_store_file", lambda key, data, content_type: None)
 
 
 def upload_and_get_id(client: TestClient, filename: str, content: bytes) -> str:
@@ -67,7 +67,7 @@ def upload_and_get_id(client: TestClient, filename: str, content: bytes) -> str:
 
 
 def process_to_ready(document_id: str, monkeypatch: pytest.MonkeyPatch, content: bytes) -> None:
-    monkeypatch.setattr(ingestion_module, "_fetch_from_s3", lambda key: content)
+    monkeypatch.setattr(ingestion_module, "_fetch_file", lambda key: content)
 
     def fake_embed(texts, *, correlation_id=None):
         return [MATCHING_VECTOR for _ in texts]

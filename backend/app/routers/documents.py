@@ -1,13 +1,14 @@
 """Document routes: upload, list, status stream, delete, retry.
 
-Validates and stores uploaded files in S3, creates one `Document` row per
+Validates and stores uploaded files (S3, or local disk without a bucket --
+see `app.storage`), creates one `Document` row per
 file with status `queued`, and enqueues an ingestion job to arq -- the
 ingestion ticket (US-007-1) owns the worker that actually extracts, chunks
 and embeds the file. Every query here filters by the session user, resolved
 via `app.security.get_current_user`, so one account can never see or touch
 another's documents.
 
-Delete is a true purge: the stored S3 object and every `Chunk` row (content
+Delete is a true purge: the stored file and every `Chunk` row (content
 and embedding) for the document are removed, not just the `Document` row
 itself. Retry clears any chunks left by a failed attempt and re-enqueues
 ingestion against the same `s3_key` rather than requiring a fresh upload.
@@ -21,13 +22,13 @@ import os
 import uuid
 from collections.abc import AsyncIterator
 
-import boto3
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pypdf import PdfReader
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DBSession
 
+from app import storage
 from app.database import SessionLocal, get_db
 from app.models import Chunk, Document, User
 from app.schemas import DocumentResponse
@@ -118,41 +119,25 @@ def _count_pdf_pages(data: bytes) -> int | None:
         return None
 
 
-def _s3_client():
-    return boto3.client("s3", endpoint_url=os.getenv("S3_ENDPOINT_URL") or None)
+def _store_file(key: str, data: bytes, content_type: str) -> None:
+    storage.store_file(key, data, content_type)
 
 
-def _store_in_s3(key: str, data: bytes, content_type: str) -> None:
-    bucket = os.getenv("S3_BUCKET")
-    if not bucket:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="S3_BUCKET is not configured.",
-        )
-    client = _s3_client()
-    client.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type)
+def _delete_file(key: str) -> None:
+    """Best-effort purge of the stored file.
 
-
-def _delete_from_s3(key: str) -> None:
-    """Best-effort purge of the stored object.
-
-    Deleting the object is attempted before the `Document` row is removed
-    (per the constraint that an S3 failure must not leave the DB row
-    orphaned pointing at a surviving object), but a delete failure here --
-    e.g. the bucket already lacks the key, or S3 is briefly unreachable --
-    is logged and swallowed rather than left to block the purge: retrying a
-    delete is always safe (`delete_object` is idempotent), so failing to
-    remove the DB row over it would only leave an orphaned S3 object *and*
-    an orphaned Document row, which is strictly worse.
+    Deleting the file is attempted before the `Document` row is removed
+    (per the constraint that a storage failure must not leave the DB row
+    orphaned pointing at a surviving file), but a delete failure here --
+    e.g. the file is already gone, or S3 is briefly unreachable -- is logged
+    and swallowed rather than left to block the purge: retrying a delete is
+    always safe, so failing to remove the DB row over it would only leave an
+    orphaned file *and* an orphaned Document row, which is strictly worse.
     """
-    bucket = os.getenv("S3_BUCKET")
-    if not bucket:
-        return
-    client = _s3_client()
     try:
-        client.delete_object(Bucket=bucket, Key=key)
+        storage.delete_file(key)
     except Exception:
-        logger.exception("failed to delete s3 object %s", key)
+        logger.exception("failed to delete stored file %s", key)
 
 
 async def _enqueue_ingestion(document_id: uuid.UUID) -> None:
@@ -169,9 +154,18 @@ async def _enqueue_ingestion(document_id: uuid.UUID) -> None:
 
     from arq.connections import create_pool
 
-    pool = await create_pool(redis_settings)
+    # The file is already stored and its row committed, so an unreachable
+    # Redis must not turn the upload into an error: the document stays
+    # `queued` and Retry re-enqueues it once the queue is back.
+    try:
+        pool = await create_pool(redis_settings)
+    except Exception:
+        logger.exception("document %s not queued for ingestion", document_id)
+        return
     try:
         await pool.enqueue_job(INGESTION_JOB_NAME, str(document_id))
+    except Exception:
+        logger.exception("document %s not queued for ingestion", document_id)
     finally:
         await pool.close()
 
@@ -256,8 +250,8 @@ async def upload_documents(
 
     documents: list[Document] = []
     for upload, data, mime_type, page_count in validated:
-        key = f"{user.id}/{uuid.uuid4()}-{upload.filename}"
-        _store_in_s3(key, data, mime_type)
+        key = f"{user.id}/{uuid.uuid4()}-{storage.safe_filename(upload.filename or '')}"
+        _store_file(key, data, mime_type)
 
         document = Document(
             user_id=user.id,
@@ -355,11 +349,11 @@ async def delete_document(
 ) -> None:
     document = _get_owned_document(db, document_id, user.id)
 
-    # Delete the stored object before the row: a document whose row
-    # survives but whose object is gone would still be visible and
-    # retry-able; the reverse (object gone, row survives briefly) is the
+    # Delete the stored file before the row: a document whose row
+    # survives but whose file is gone would still be visible and
+    # retry-able; the reverse (file gone, row survives briefly) is the
     # safe ordering given above (AC-017, AC-019).
-    _delete_from_s3(document.s3_key)
+    _delete_file(document.s3_key)
 
     # `Document.chunks` cascades "all, delete-orphan", so deleting the row
     # removes every Chunk (content and embedding) for it in the same

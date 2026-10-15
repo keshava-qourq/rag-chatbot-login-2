@@ -81,7 +81,7 @@ def txt_file(name: str = "notes.txt", content: bytes = b"hello world") -> tuple:
 
 @pytest.fixture(autouse=True)
 def stub_s3_store(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(documents_module, "_store_in_s3", lambda key, data, content_type: None)
+    monkeypatch.setattr(documents_module, "_store_file", lambda key, data, content_type: None)
 
 
 def upload_and_get_id(client: TestClient, filename: str = "notes.txt") -> str:
@@ -95,7 +95,7 @@ def process_to_ready(
     monkeypatch: pytest.MonkeyPatch,
     content: bytes = b"The Eiffel Tower is a famous landmark in Paris, France.",
 ) -> None:
-    monkeypatch.setattr(ingestion_module, "_fetch_from_s3", lambda key: content)
+    monkeypatch.setattr(ingestion_module, "_fetch_file", lambda key: content)
 
     def fake_embed(texts, *, correlation_id=None):
         return [MATCHING_VECTOR for _ in texts]
@@ -326,7 +326,7 @@ def test_failed_document_response_never_carries_provider_text_stack_trace_or_key
     def boom(key: str) -> bytes:
         raise ingestion_module.IngestionError(_RAW_PROVIDER_ERROR_TEXT)
 
-    monkeypatch.setattr(ingestion_module, "_fetch_from_s3", boom)
+    monkeypatch.setattr(ingestion_module, "_fetch_file", boom)
 
     asyncio.run(ingestion_module.process_document({}, document_id))
 
@@ -380,7 +380,7 @@ def test_embedding_failure_retries_a_bounded_number_of_times_with_backoff_then_f
     document_id = upload_and_get_id(client)
     monkeypatch.setattr(
         ingestion_module,
-        "_fetch_from_s3",
+        "_fetch_file",
         lambda key: b"hello world, this is some real content to chunk and embed.",
     )
 

@@ -11,6 +11,14 @@ COPY app ./app
 # Run as an unprivileged user. The service never needs root, and a container that
 # drops it limits what a compromise of the app can do to the host.
 RUN useradd --create-home --uid 10001 appuser
+
+# Without S3_BUCKET, uploaded files are written here (see app/storage.py).
+# Mount a volume at this path -- shared with the ingestion worker -- so files
+# survive the container being replaced.
+RUN mkdir -p /data/media && chown appuser:appuser /data/media
+ENV MEDIA_ROOT=/data/media
+VOLUME ["/data/media"]
+
 USER appuser
 
 EXPOSE 8000
