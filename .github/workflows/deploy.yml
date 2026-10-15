@@ -73,7 +73,7 @@ jobs:
           # address on the platform's own host, known ahead of time -- not discovered here
           # the way an AWS-assigned hostname would have to be. The variable name is the
           # frontend's own, because a bundler inlines only its own prefix.
-          VITE_API_BASE_URL: http://localhost:8080/07ceb74985f2/
+          VITE_API_BASE_URL: https://34.204.217.28:8443/apps/07ceb74985f2/
 
       - name: Deploy the frontend
         working-directory: frontend
@@ -94,4 +94,4 @@ jobs:
             --job-id "$JOB" >/dev/null
 
           echo "Frontend: https://${BRANCH}.${AMPLIFY_APP}.amplifyapp.com"
-          echo "API:      http://localhost:8080/07ceb74985f2/"
+          echo "API:      https://34.204.217.28:8443/apps/07ceb74985f2/"
