@@ -43,9 +43,10 @@ DEFAULT_CHAT_MODEL = "gemini-2.5-flash"
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_TIMEOUT_SECONDS = 30.0
 
-# `chunks.embedding` is a pgvector `vector(768)` column (see app.models), so
-# every embedding this module returns is requested at exactly this
-# dimensionality regardless of the embedding model's native output size.
+# Chat compares a question's embedding with each stored chunk's (see
+# app.routers.conversations), so every embedding this module returns is
+# requested at exactly this dimensionality regardless of the embedding
+# model's native output size.
 EMBEDDING_OUTPUT_DIMENSIONALITY = 768
 
 # A single shared pool backs the hard per-call timeout below. Not a context
@@ -287,7 +288,7 @@ def embed(texts: Sequence[str], *, correlation_id: str | None = None) -> list[li
     """Embed one or more texts with the configured Gemini embedding model.
 
     Every embedding is requested at `EMBEDDING_OUTPUT_DIMENSIONALITY` (768)
-    so the result always matches the `chunks.embedding vector(768)` column.
+    so every vector is comparable with the ones already stored in `chunks`.
     """
     config = get_config()
     client = _get_client(config)

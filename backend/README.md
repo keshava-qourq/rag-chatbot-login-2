@@ -38,7 +38,7 @@ key is rotated.
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `GEMINI_API_KEY` | no | -- | Fallback for the paid-tier key described above, used only when no key has been saved on the Settings page. |
-| `GEMINI_EMBEDDING_MODEL` | no | `gemini-embedding-001` | Gemini embedding model used by `app.gemini_client.embed`. Every call requests `output_dimensionality=768` to match the `chunks.embedding vector(768)` column. |
+| `GEMINI_EMBEDDING_MODEL` | no | `gemini-embedding-001` | Gemini embedding model used by `app.gemini_client.embed`. Every call requests `output_dimensionality=768` so every stored chunk embedding has the same length. |
 | `GEMINI_CHAT_MODEL` | no | `gemini-2.5-flash` | Gemini chat model used by `app.gemini_client.chat`. |
 | `GEMINI_TIMEOUT_SECONDS` | no | `30` | Per-call time budget; a call exceeding this raises `GeminiProviderError` instead of hanging. |
 | `GEMINI_MAX_RETRIES` | no | `3` | Attempts made before a failing call raises `GeminiProviderError`. |

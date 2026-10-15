@@ -261,7 +261,7 @@ def test_embed_returns_vectors_for_batch_input(monkeypatch: pytest.MonkeyPatch) 
 
 def test_embed_returns_768_dimension_vectors(monkeypatch: pytest.MonkeyPatch) -> None:
     """Retry note: every embedding must come back at 768 dimensions so it
-    matches the `chunks.embedding vector(768)` column, and the
+    matches every chunk embedding already stored, and the
     `output_dimensionality` request must actually be sent to the model."""
     monkeypatch.setenv("GEMINI_API_KEY", "a-key")
     models = _FakeModels()

@@ -31,7 +31,6 @@ passlib>=1.7
 # bcrypt 4.1+ accepts -- a known passlib/bcrypt interop break, not anything
 # about this app's own passwords.
 bcrypt>=4.0,<4.1
-pgvector>=0.3
 pypdf>=4.0
 python-docx>=1.1
 python-multipart>=0.0.9

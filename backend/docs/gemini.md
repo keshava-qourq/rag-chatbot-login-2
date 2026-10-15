@@ -48,7 +48,7 @@ been saved.
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `GEMINI_API_KEY` | no | none | Fallback for the paid-tier credential described above, used only while no key is saved on the Settings page. |
-| `GEMINI_EMBEDDING_MODEL` | no | `gemini-embedding-001` | Model used by `gemini_client.embed`. Every call requests `output_dimensionality=768` so the result matches the `chunks.embedding vector(768)` column regardless of the model's native size. |
+| `GEMINI_EMBEDDING_MODEL` | no | `gemini-embedding-001` | Model used by `gemini_client.embed`. Every call requests `output_dimensionality=768` so every stored chunk embedding has the same length regardless of the model's native size. |
 | `GEMINI_CHAT_MODEL` | no | `gemini-2.5-flash` | Model used by `gemini_client.chat`. |
 | `GEMINI_MAX_RETRIES` | no | `3` | Attempts before a provider outage surfaces as `GeminiProviderError` instead of hanging. |
 | `GEMINI_TIMEOUT_SECONDS` | no | `30` | Per-attempt hard timeout enforced around every Gemini call. |

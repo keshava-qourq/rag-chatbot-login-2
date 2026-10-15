@@ -44,7 +44,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as DBSession
 
 from app import storage
-from app.database import SessionLocal, engine
+from app.database import SessionLocal
 from app.gemini_client import GeminiConfigurationError, embed
 from app.models import Chunk, Document
 from app.storage import StorageError
@@ -62,12 +62,6 @@ _MD_MIME = "text/markdown"
 _TXT_MIME = "text/plain"
 
 _MD_HEADER_RE = re.compile(r"^#{1,6}\s+.*$", re.MULTILINE)
-
-# `chunks.embedding` falls back to a plain `Text` column on SQLite (see
-# `app.models.EmbeddingType`); a Python list cannot bind directly to that
-# column type the way it can to pgvector's native `vector(768)`, so values
-# are JSON-encoded there and left as real lists everywhere else.
-_IS_SQLITE = engine.dialect.name == "sqlite"
 
 # Plain-language messages `_classify_failure` maps a failure onto, per
 # AC-024 -- a user sees one of these, never a raw exception string.
@@ -87,8 +81,10 @@ class IngestionError(RuntimeError):
     """
 
 
-def _embedding_value(vector: list[float]) -> object:
-    return json.dumps(vector) if _IS_SQLITE else vector
+def _embedding_value(vector: list[float]) -> str:
+    """`chunks.embedding` is a plain text column on every database (see
+    `app.models.Chunk`), so the vector is stored JSON-encoded."""
+    return json.dumps(vector)
 
 
 def _fetch_file(key: str) -> bytes:

@@ -8,12 +8,9 @@ not merely unlikely to be chosen -- because every code path below filters by
 `user_id` before ranking, so another account's closest-matching chunk is
 never even considered.
 
-On Postgres this runs as a real pgvector `ORDER BY ... <=> ... LIMIT k`
-query. `chunks.embedding` falls back to a plain `Text` column on SQLite
-(see `app.models.EmbeddingType`), which cannot run that query at all, so
-there this degrades to fetching every ready, owned chunk and ranking them
-by cosine similarity in Python -- same filtering, computed application-side
-instead of in the database.
+`chunks.embedding` is JSON text on every database (see `app.models.Chunk`),
+so this fetches every ready, owned chunk and ranks them by cosine similarity
+in Python -- the database never computes similarity itself.
 """
 
 from __future__ import annotations
@@ -21,22 +18,17 @@ from __future__ import annotations
 import json
 import uuid
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session as DBSession
 
-from app.database import engine
 from app.gemini_client import embed
 from app.ingestion import get_ready_chunks
-from app.models import Chunk, Document
-
-_IS_SQLITE = engine.dialect.name == "sqlite"
+from app.models import Chunk
 
 
 def _coerce_vector(value: object) -> list[float]:
     """A chunk's stored embedding as a plain `list[float]`.
 
-    On SQLite it is JSON-encoded text (see `app.ingestion._embedding_value`);
-    everywhere else it is already a list.
+    Stored as JSON-encoded text (see `app.ingestion._embedding_value`).
     """
     if isinstance(value, str):
         return [float(v) for v in json.loads(value)]
@@ -60,18 +52,7 @@ def search(session: DBSession, user_id: uuid.UUID, question: str, k: int) -> lis
     """
     query_vector = embed([question])[0]
 
-    if not _IS_SQLITE:
-        stmt = (
-            select(Chunk)
-            .join(Document, Chunk.document_id == Document.id)
-            .where(Chunk.user_id == user_id, Document.status == "ready")
-            .order_by(Chunk.embedding.cosine_distance(query_vector))
-            .limit(k)
-        )
-        return list(session.execute(stmt).scalars().all())
-
-    # SQLite fallback: rank every owned, ready chunk in Python. Still never
-    # touches another user's chunks -- `get_ready_chunks` filters on
+    # Never touches another user's chunks -- `get_ready_chunks` filters on
     # `user_id` before a single similarity score is computed.
     candidates = get_ready_chunks(session, user_id)
     scored: list[tuple[float, Chunk]] = []

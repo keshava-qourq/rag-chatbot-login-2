@@ -6,34 +6,25 @@ messages, citations, plus the app-wide `app_settings`. Ownership columns
 per the architecture note that
 per-account isolation is enforced by filtering on them.
 
-Two Postgres-only types appear here -- `citext` for case-insensitive email
-and pgvector's `vector(768)` for embeddings -- because that is what the
-architecture names. Both degrade to a portable equivalent via
-`with_variant` so `Base.metadata.create_all` still succeeds against the
-SQLite fallback `database.py` uses when `DATABASE_URL` is unset; the real
-target remains PostgreSQL 16 with the pgvector extension enabled.
+Every column uses a portable type, so `Base.metadata.create_all` succeeds
+on any PostgreSQL as well as the SQLite fallback `database.py` uses when
+`DATABASE_URL` is unset. No database extension is required: email is plain
+text (the auth routes lowercase it before every write and lookup, so
+uniqueness is still case-insensitive), and an embedding is its 768 floats
+stored as JSON text (chat ranks chunks by cosine similarity in Python -- see
+`app.routers.conversations`). Earlier versions used `citext` and pgvector's
+`vector(768)`, which made startup fail on any Postgres without those
+extensions installed and enabled.
 """
 
 import uuid
 from datetime import UTC, datetime
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, Uuid
-from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.database import Base
-
-# citext requires `CREATE EXTENSION IF NOT EXISTS citext;` on the Postgres
-# database before this column can be created there -- ops' job, not this
-# scaffold's; there are no migrations yet to carry it.
-EmailType = CITEXT().with_variant(String(320), "sqlite")
-
-# pgvector's column type compiles to Postgres-specific DDL; on every other
-# dialect (SQLite, for tests) it falls back to plain text so the table still
-# creates, even though nothing here can run a similarity query against it.
-EmbeddingType = Vector(768).with_variant(Text(), "sqlite")
 
 CreatedAt = Mapped[datetime]
 
@@ -62,7 +53,9 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    email: Mapped[str] = mapped_column(EmailType, unique=True, nullable=False)
+    # Always stored lowercased (see `app.routers.auth`), which is what makes
+    # the unique constraint case-insensitive.
+    email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: CreatedAt = created_at_column()
 
@@ -134,7 +127,9 @@ class Chunk(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     page: Mapped[int] = mapped_column(Integer, nullable=False)
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    embedding: Mapped[list[float] | None] = mapped_column(EmbeddingType, nullable=True)
+    # The chunk's 768-float embedding as JSON text (see
+    # `app.ingestion._embedding_value`).
+    embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: CreatedAt = created_at_column()
 
     document: Mapped["Document"] = relationship(back_populates="chunks")

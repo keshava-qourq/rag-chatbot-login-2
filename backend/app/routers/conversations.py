@@ -329,10 +329,9 @@ def _sse(event: str, data: dict) -> str:
 def _parse_embedding(value: object) -> list[float] | None:
     """A chunk's stored embedding as a plain list of floats.
 
-    On SQLite (tests, local dev without pgvector) `Chunk.embedding` is
-    JSON-encoded text (see `app.ingestion._embedding_value`); on Postgres it
-    is already a list via pgvector. Either way this is read-only normalising
-    -- it never writes a chunk's embedding back.
+    `Chunk.embedding` is JSON-encoded text on every database (see
+    `app.ingestion._embedding_value`); a list is accepted too. This is
+    read-only normalising -- it never writes a chunk's embedding back.
     """
     if value is None:
         return None
