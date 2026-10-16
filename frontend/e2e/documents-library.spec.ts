@@ -3,27 +3,16 @@ import { expect, type Page, test } from "@playwright/test";
 // Browser-level coverage for the Document library screen (US-005-1), driven
 // through routed/stubbed responses for GET /documents, POST /documents and
 // GET /documents/events -- no reliance on a seeded production database, no
-// reliance on background worker timing. Each test signs up a fresh account
-// (mirroring frontend/e2e/auth.spec.ts's sign-up steps) purely to obtain a
-// real, authenticated session; every documents-related response the screen
-// reads is then stubbed for that page.
+// reliance on background worker timing. Each test opens the app (there is
+// no login); every documents-related response the screen reads is then
+// stubbed for that page.
 
-const STRONG_PASSWORD = "Str0ngPass!";
-
-function uniqueEmail(): string {
-  return `docs-ui-${Date.now()}-${Math.floor(Math.random() * 100000)}@example.com`;
-}
-
-// Mirrors the sign-up steps in auth.spec.ts rather than importing them,
-// since routes must be registered on the page before the post-sign-up
-// redirect fires the screen's first GET /documents.
-async function signUpFreshAccount(page: Page): Promise<void> {
-  await page.goto("/sign-up");
-  await page.getByLabel(/email address/i).fill(uniqueEmail());
-  await page.getByLabel("Password", { exact: true }).fill(STRONG_PASSWORD);
-  await page.getByLabel(/confirm password/i).fill(STRONG_PASSWORD);
-  await page.getByLabel(/answers come only from documents/i).check();
-  await page.getByRole("button", { name: /create account/i }).click();
+// There is no login: opening the app lands straight on the document library.
+// Goes to "/" and lets the app redirect, rather than loading /documents
+// directly: tests stub any URL ending in /documents, which would otherwise
+// intercept the page load itself instead of just the API call.
+async function openTheApp(page: Page): Promise<void> {
+  await page.goto("/");
   await expect(page).toHaveURL(/\/documents/);
 }
 
@@ -69,7 +58,7 @@ async function stubUpload(page: Page, response: { status: number; body: unknown 
 }
 
 test.describe("Document library screen", () => {
-  test("AC-014: shows only this account's documents, with name, upload date, size and status badge", async ({
+  test("AC-014: shows the workspace's documents, with name, upload date, size and status badge", async ({
     page,
   }) => {
     await stubDocumentList(page, [
@@ -83,7 +72,7 @@ test.describe("Document library screen", () => {
     ]);
     await stubDocumentEvents(page, "");
 
-    await signUpFreshAccount(page);
+    await openTheApp(page);
 
     const heading = page.getByText("lease-agreement.pdf");
     await expect(heading).toBeVisible();
@@ -92,7 +81,7 @@ test.describe("Document library screen", () => {
     await expect(row.getByText(/2\.0 KB/)).toBeVisible();
     await expect(row.getByText(/jan 5, 2026/i)).toBeVisible();
 
-    // Stubbed list is the only account's documents: no other row appears.
+    // The stubbed list is the whole workspace: no other row appears.
     await expect(page.locator("ul > li")).toHaveCount(1);
   });
 
@@ -113,7 +102,7 @@ test.describe("Document library screen", () => {
       'event: status\ndata: {"id":"doc-1","status":"ready","filename":"report.pdf"}\n\n',
     );
 
-    await signUpFreshAccount(page);
+    await openTheApp(page);
 
     const heading = page.getByText("report.pdf");
     await expect(heading).toBeVisible();
@@ -131,7 +120,7 @@ test.describe("Document library screen", () => {
     await stubDocumentList(page, []);
     await stubDocumentEvents(page, "");
 
-    await signUpFreshAccount(page);
+    await openTheApp(page);
 
     await expect(page.getByText(/no documents yet/i)).toBeVisible();
     await page.getByRole("link", { name: /getting started/i }).click();
@@ -165,7 +154,7 @@ test.describe("Document library screen", () => {
       ],
     });
 
-    await signUpFreshAccount(page);
+    await openTheApp(page);
     await expect(page.getByText("existing.pdf")).toBeVisible();
 
     await page.getByLabel(/choose documents to upload/i).setInputFiles({
@@ -195,7 +184,7 @@ test.describe("Document library screen", () => {
       },
     });
 
-    await signUpFreshAccount(page);
+    await openTheApp(page);
     await expect(page.getByText(/no documents yet/i)).toBeVisible();
 
     await page
@@ -220,7 +209,7 @@ test.describe("Document library screen", () => {
       },
     });
 
-    await signUpFreshAccount(page);
+    await openTheApp(page);
     await expect(page.getByText(/no documents yet/i)).toBeVisible();
 
     await page.getByLabel(/choose documents to upload/i).setInputFiles({

@@ -11,7 +11,6 @@ enqueued rather than executed inline.
 """
 
 import io
-import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -20,24 +19,9 @@ from pypdf import PdfWriter
 import app.routers.documents as documents_module
 from app.main import app
 
-STRONG_PASSWORD = "Str0ngPass!"
-
-
-def unique_email() -> str:
-    return f"user-{uuid.uuid4().hex}@example.com"
-
 
 def new_client() -> TestClient:
     return TestClient(app, base_url="https://testserver")
-
-
-def signed_up_client() -> TestClient:
-    client = new_client()
-    response = client.post(
-        "/auth/signup", json={"email": unique_email(), "password": STRONG_PASSWORD}
-    )
-    assert response.status_code == 201
-    return client
 
 
 @pytest.fixture(autouse=True)
@@ -83,7 +67,7 @@ def txt_file(name: str = "notes.txt", content: bytes = b"hello world") -> tuple:
 
 
 def test_accepted_upload_is_queued_for_the_session_user() -> None:
-    client = signed_up_client()
+    client = new_client()
 
     response = client.post("/documents", files={"files": txt_file()})
 
@@ -95,7 +79,7 @@ def test_accepted_upload_is_queued_for_the_session_user() -> None:
 
 
 def test_most_recently_uploaded_document_appears_first_in_list() -> None:
-    client = signed_up_client()
+    client = new_client()
     client.post("/documents", files={"files": txt_file("first.txt")})
     client.post("/documents", files={"files": txt_file("second.txt")})
 
@@ -109,7 +93,7 @@ def test_most_recently_uploaded_document_appears_first_in_list() -> None:
 
 
 def test_accepted_docx_upload_is_queued_and_appears_in_the_list() -> None:
-    client = signed_up_client()
+    client = new_client()
     docx_bytes = make_docx_bytes()
 
     response = client.post(
@@ -133,7 +117,7 @@ def test_accepted_docx_upload_is_queued_and_appears_in_the_list() -> None:
 
 
 def test_accepted_markdown_upload_is_queued_and_appears_in_the_list() -> None:
-    client = signed_up_client()
+    client = new_client()
 
     response = client.post(
         "/documents",
@@ -165,7 +149,7 @@ def test_oversized_file_is_rejected_naming_limit_and_actual_size(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("MAX_UPLOAD_BYTES", "10")
-    client = signed_up_client()
+    client = new_client()
 
     response = client.post("/documents", files={"files": txt_file("big.txt", b"x" * 100)})
 
@@ -177,7 +161,7 @@ def test_oversized_file_is_rejected_naming_limit_and_actual_size(
 
 def test_oversized_file_creates_no_document_record(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MAX_UPLOAD_BYTES", "10")
-    client = signed_up_client()
+    client = new_client()
 
     client.post("/documents", files={"files": txt_file("big.txt", b"x" * 100)})
 
@@ -188,7 +172,7 @@ def test_oversized_file_is_rejected_before_any_s3_write(
     monkeypatch: pytest.MonkeyPatch, stub_s3: list[tuple[str, bytes, str]]
 ) -> None:
     monkeypatch.setenv("MAX_UPLOAD_BYTES", "10")
-    client = signed_up_client()
+    client = new_client()
 
     client.post("/documents", files={"files": txt_file("big.txt", b"x" * 100)})
 
@@ -199,7 +183,7 @@ def test_over_page_limit_pdf_is_rejected_naming_limit_and_actual_pages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("MAX_UPLOAD_PAGES", "1")
-    client = signed_up_client()
+    client = new_client()
     pdf_bytes = make_pdf_bytes(3)
 
     response = client.post(
@@ -217,7 +201,7 @@ def test_over_page_limit_pdf_creates_no_document_record_and_no_s3_write(
     monkeypatch: pytest.MonkeyPatch, stub_s3: list[tuple[str, bytes, str]]
 ) -> None:
     monkeypatch.setenv("MAX_UPLOAD_PAGES", "1")
-    client = signed_up_client()
+    client = new_client()
     pdf_bytes = make_pdf_bytes(3)
 
     client.post(
@@ -231,7 +215,7 @@ def test_over_page_limit_pdf_creates_no_document_record_and_no_s3_write(
 
 def test_pdf_within_page_limit_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MAX_UPLOAD_PAGES", "5")
-    client = signed_up_client()
+    client = new_client()
     pdf_bytes = make_pdf_bytes(3)
 
     response = client.post(
@@ -249,7 +233,7 @@ def test_pdf_within_page_limit_is_accepted(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_unsupported_extension_is_rejected_listing_supported_types() -> None:
-    client = signed_up_client()
+    client = new_client()
 
     response = client.post(
         "/documents",
@@ -265,7 +249,7 @@ def test_unsupported_extension_is_rejected_listing_supported_types() -> None:
 
 
 def test_unsupported_extension_creates_no_document_record() -> None:
-    client = signed_up_client()
+    client = new_client()
 
     client.post(
         "/documents",
@@ -282,7 +266,7 @@ def test_unsupported_extension_creates_no_document_record() -> None:
 
 
 def test_multi_file_upload_creates_one_independent_record_per_file() -> None:
-    client = signed_up_client()
+    client = new_client()
 
     response = client.post(
         "/documents",
@@ -305,7 +289,7 @@ def test_multi_file_upload_creates_one_independent_record_per_file() -> None:
 def test_one_invalid_file_in_a_batch_rejects_the_whole_batch() -> None:
     """Documented batch-validation behaviour: either every file in a request
     passes validation, or none of them are stored."""
-    client = signed_up_client()
+    client = new_client()
 
     response = client.post(
         "/documents",
@@ -323,7 +307,7 @@ def test_deleting_one_document_from_a_batch_leaves_the_others_untouched() -> Non
     """Proves each Document row in a multi-file upload is independently
     mutable: deleting one by id does not affect the sibling rows created in
     the same request."""
-    client = signed_up_client()
+    client = new_client()
 
     response = client.post(
         "/documents",
@@ -347,7 +331,7 @@ def test_deleting_one_document_from_a_batch_leaves_the_others_untouched() -> Non
 def test_retrying_one_document_from_a_batch_leaves_the_others_untouched() -> None:
     """Proves per-row status mutation (retry resets status) does not leak
     across sibling rows created in the same upload request."""
-    client = signed_up_client()
+    client = new_client()
 
     response = client.post(
         "/documents",
@@ -415,7 +399,7 @@ def test_upload_enqueues_the_ingestion_job_without_executing_it_inline(
 
     monkeypatch.setattr(ingestion_module, "process_document", spying_process_document)
 
-    client = signed_up_client()
+    client = new_client()
     response = client.post("/documents", files={"files": txt_file()})
 
     assert response.status_code == 201
@@ -439,55 +423,8 @@ def test_upload_enqueues_the_ingestion_job_without_executing_it_inline(
 # ---------------------------------------------------------------------------
 
 
-def test_second_account_cannot_see_the_first_accounts_documents() -> None:
-    owner = signed_up_client()
-    owner.post("/documents", files={"files": txt_file()})
-
-    other = signed_up_client()
-
-    assert other.get("/documents").json() == []
-
-
-def test_second_account_cannot_delete_the_first_accounts_document() -> None:
-    owner = signed_up_client()
-    doc_id = owner.post("/documents", files={"files": txt_file()}).json()[0]["id"]
-
-    other = signed_up_client()
-    response = other.delete(f"/documents/{doc_id}")
-
-    assert response.status_code == 404
-    assert owner.get("/documents").json()  # still present for the owner
-
-
-def test_second_account_cannot_retry_the_first_accounts_document() -> None:
-    owner = signed_up_client()
-    doc_id = owner.post("/documents", files={"files": txt_file()}).json()[0]["id"]
-
-    other = signed_up_client()
-    response = other.post(f"/documents/{doc_id}/retry")
-
-    assert response.status_code == 404
-
-
-def test_second_account_gets_404_on_both_delete_and_retry_of_the_same_foreign_id() -> None:
-    """Both mutating routes are checked against the exact same foreign id,
-    not just against the resource type in general."""
-    owner = signed_up_client()
-    doc_id = owner.post("/documents", files={"files": txt_file()}).json()[0]["id"]
-
-    other = signed_up_client()
-    retry_response = other.post(f"/documents/{doc_id}/retry")
-    delete_response = other.delete(f"/documents/{doc_id}")
-
-    assert retry_response.status_code == 404
-    assert delete_response.status_code == 404
-    # Neither attempt mutated or removed the owner's row.
-    owner_docs = owner.get("/documents").json()
-    assert any(doc["id"] == doc_id for doc in owner_docs)
-
-
 def test_deleting_an_unknown_document_id_is_a_404_not_a_500() -> None:
-    client = signed_up_client()
+    client = new_client()
 
     response = client.delete("/documents/not-a-uuid")
 
@@ -495,7 +432,7 @@ def test_deleting_an_unknown_document_id_is_a_404_not_a_500() -> None:
 
 
 def test_retrying_an_unknown_document_id_is_a_404_not_a_500() -> None:
-    client = signed_up_client()
+    client = new_client()
 
     response = client.post("/documents/not-a-uuid/retry")
 
@@ -503,7 +440,7 @@ def test_retrying_an_unknown_document_id_is_a_404_not_a_500() -> None:
 
 
 def test_owner_can_delete_their_own_document() -> None:
-    client = signed_up_client()
+    client = new_client()
     doc_id = client.post("/documents", files={"files": txt_file()}).json()[0]["id"]
 
     response = client.delete(f"/documents/{doc_id}")
@@ -521,35 +458,16 @@ def test_owner_can_delete_their_own_document() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_upload_without_a_session_cookie_is_unauthorized() -> None:
-    client = new_client()
-
-    response = client.post("/documents", files={"files": txt_file()})
-
-    assert response.status_code == 401
-
-
-def test_listing_documents_without_a_session_cookie_is_unauthorized() -> None:
-    client = new_client()
-
-    response = client.get("/documents")
-
-    assert response.status_code == 401
-
-
 # ---------------------------------------------------------------------------
 # GET /documents/events: text/event-stream, caller-scoped only.
 # ---------------------------------------------------------------------------
 
 
-def test_events_stream_is_text_event_stream_and_only_the_callers_documents() -> None:
-    owner = signed_up_client()
-    owner.post("/documents", files={"files": txt_file("owner-file.txt")})
+def test_events_stream_is_text_event_stream_of_the_workspaces_documents() -> None:
+    client = new_client()
+    client.post("/documents", files={"files": txt_file("owner-file.txt")})
 
-    other = signed_up_client()
-    other.post("/documents", files={"files": txt_file("other-file.txt")})
-
-    with owner.stream("GET", "/documents/events") as response:
+    with client.stream("GET", "/documents/events") as response:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
 
@@ -560,4 +478,3 @@ def test_events_stream_is_text_event_stream_and_only_the_callers_documents() -> 
                 break
 
         assert "owner-file.txt" in seen
-        assert "other-file.txt" not in seen

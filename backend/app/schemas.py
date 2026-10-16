@@ -8,25 +8,7 @@ remaining stub endpoint and so no placeholder response model here either.
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, field_validator
-
-
-class SignupRequest(BaseModel):
-    email: EmailStr
-    password: str
-
-
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
-
-
-class UserResponse(BaseModel):
-    """What signup, login and /me return: never the password or its hash."""
-
-    id: str
-    email: EmailStr
-    created_at: datetime
+from pydantic import BaseModel, field_validator
 
 
 class RenameConversationRequest(BaseModel):

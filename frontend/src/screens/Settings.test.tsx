@@ -40,7 +40,6 @@ function renderSettings() {
     <MemoryRouter initialEntries={["/settings"]}>
       <Routes>
         <Route path="/settings" element={<Settings />} />
-        <Route path="/login" element={<div>Login screen</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -71,7 +70,8 @@ describe("Settings", () => {
     renderSettings();
 
     expect(await screen.findByText("Saved in app")).toBeInTheDocument();
-    expect(screen.getByText(/key ending in 9876/i)).toHaveTextContent("owner@example.com");
+    expect(screen.getByText(/key ending in 9876/i)).toHaveTextContent(/saved/i);
+    expect(screen.getByText(/key ending in 9876/i)).not.toHaveTextContent("owner@example.com");
   });
 
   it("says when the key in effect comes from the server environment", async () => {
@@ -147,17 +147,5 @@ describe("Settings", () => {
     await waitFor(() => expect(remove).toHaveBeenCalledTimes(1));
     expect(await screen.findByText("Not set")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(/removed/i);
-  });
-
-  it("asks a signed-out visitor to log in", async () => {
-    vi.spyOn(settingsApi, "getGeminiSettings").mockRejectedValue(
-      new ApiError(401, { detail: "not authenticated" }, "not authenticated"),
-    );
-
-    renderSettings();
-
-    expect(await screen.findByText(/log in to manage settings/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("link", { name: /go to log in/i }));
-    expect(await screen.findByText("Login screen")).toBeInTheDocument();
   });
 });

@@ -2,23 +2,16 @@ import { expect, type Page, test } from "@playwright/test";
 
 // Browser-level coverage for conversation list, reopen, new-chat isolation,
 // inline rename and delete (US-014-1/US-014-2/US-014-3) -- same stubbing
-// approach as chat.spec.ts: a fresh signed-up account purely for a real
-// session, then every conversation/document response the Chat screen reads
-// is routed and stubbed by hand.
+// approach as chat.spec.ts: each test opens the app (there is no login),
+// then every conversation/document response the Chat screen reads is routed
+// and stubbed by hand.
 
-const STRONG_PASSWORD = "Str0ngPass!";
-
-function uniqueEmail(): string {
-  return `conv-${Date.now()}-${Math.floor(Math.random() * 100000)}@example.com`;
-}
-
-async function signUpFreshAccount(page: Page): Promise<void> {
-  await page.goto("/sign-up");
-  await page.getByLabel(/email address/i).fill(uniqueEmail());
-  await page.getByLabel("Password", { exact: true }).fill(STRONG_PASSWORD);
-  await page.getByLabel(/confirm password/i).fill(STRONG_PASSWORD);
-  await page.getByLabel(/answers come only from documents/i).check();
-  await page.getByRole("button", { name: /create account/i }).click();
+// There is no login: opening the app lands straight on the document library.
+// Goes to "/" and lets the app redirect, rather than loading /documents
+// directly: tests stub any URL ending in /documents, which would otherwise
+// intercept the page load itself instead of just the API call.
+async function openTheApp(page: Page): Promise<void> {
+  await page.goto("/");
   await expect(page).toHaveURL(/\/documents/);
 }
 
@@ -135,7 +128,7 @@ async function setUpSidebarWithTwoConversations(page: Page): Promise<void> {
   await stubDocumentList(page, [READY_DOCUMENT]);
   await stubDocumentEvents(page);
 
-  await signUpFreshAccount(page);
+  await openTheApp(page);
   await page.goto("/chat");
 }
 

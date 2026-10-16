@@ -2,7 +2,6 @@
 upload that succeeds with no bucket and no reachable Redis."""
 
 import io
-import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -86,11 +85,6 @@ def test_upload_works_with_no_bucket_and_no_redis(
     # A queue is configured but nothing listens there, so enqueueing fails.
     monkeypatch.setattr("app.routers.documents._redis_settings", _unreachable_redis)
     client = TestClient(app, base_url="https://testserver")
-    signup = client.post(
-        "/auth/signup",
-        json={"email": f"user-{uuid.uuid4().hex}@example.com", "password": "Str0ngPass!"},
-    )
-    assert signup.status_code == 201
 
     response = client.post(
         "/documents",

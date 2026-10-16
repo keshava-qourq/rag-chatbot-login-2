@@ -31,24 +31,9 @@ from app.database import SessionLocal
 from app.main import app
 from app.models import Chunk, Document
 
-STRONG_PASSWORD = "Str0ngPass!"
-
-
-def unique_email() -> str:
-    return f"user-{uuid.uuid4().hex}@example.com"
-
 
 def new_client() -> TestClient:
     return TestClient(app, base_url="https://testserver")
-
-
-def signed_up_client() -> TestClient:
-    client = new_client()
-    response = client.post(
-        "/auth/signup", json={"email": unique_email(), "password": STRONG_PASSWORD}
-    )
-    assert response.status_code == 201
-    return client
 
 
 def txt_file(name: str = "notes.txt", content: bytes = b"hello world") -> tuple:
@@ -127,7 +112,7 @@ def set_document_status(document_id: str, status: str, failure_reason: str | Non
 def test_delete_removes_row_chunks_and_calls_s3_delete_for_stored_key(
     monkeypatch: pytest.MonkeyPatch, stub_s3_delete: list[str]
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
     process_to_ready(document_id, monkeypatch)
     assert chunk_count(document_id) >= 1
@@ -160,7 +145,7 @@ def test_delete_removes_row_chunks_and_calls_s3_delete_for_stored_key(
 def test_delete_of_non_ready_document_leaves_no_chunks_and_no_enqueue(
     status: str, monkeypatch: pytest.MonkeyPatch, stub_s3_delete: list[str]
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
     process_to_ready(document_id, monkeypatch)
     assert chunk_count(document_id) >= 1
@@ -201,7 +186,7 @@ def test_delete_of_non_ready_document_leaves_no_chunks_and_no_enqueue(
 def test_failed_ingestion_exposes_plain_language_failure_reason_via_api(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
 
     raw_exception_text = "S3 is down: connection refused on port 9999"
@@ -231,7 +216,7 @@ def test_failed_ingestion_exposes_plain_language_failure_reason_via_api(
 def test_retry_deletes_chunks_reenqueues_and_returns_queued_with_null_failure_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
     process_to_ready(document_id, monkeypatch)
     assert chunk_count(document_id) >= 1
@@ -265,33 +250,8 @@ def test_retry_deletes_chunks_reenqueues_and_returns_queued_with_null_failure_re
 # ---------------------------------------------------------------------------
 
 
-def test_delete_and_retry_of_another_users_document_return_404() -> None:
-    owner = signed_up_client()
-    document_id = upload_and_get_id(owner)
-
-    other = signed_up_client()
-
-    delete_response = other.delete(f"/documents/{document_id}")
-    retry_response = other.post(f"/documents/{document_id}/retry")
-
-    assert delete_response.status_code == 404
-    assert retry_response.status_code == 404
-    # Untouched: the real owner's document still exists and is unaffected.
-    assert document_exists(document_id) is True
-    owned_list = owner.get("/documents").json()
-    assert any(doc["id"] == document_id for doc in owned_list)
-
-
-def test_delete_and_retry_without_a_session_cookie_are_unauthorized() -> None:
-    anonymous = new_client()
-    random_id = str(uuid.uuid4())
-
-    assert anonymous.delete(f"/documents/{random_id}").status_code == 401
-    assert anonymous.post(f"/documents/{random_id}/retry").status_code == 401
-
-
 def test_delete_and_retry_of_a_nonexistent_document_id_return_404() -> None:
-    client = signed_up_client()
+    client = new_client()
     random_id = str(uuid.uuid4())
 
     assert client.delete(f"/documents/{random_id}").status_code == 404

@@ -43,7 +43,6 @@ from app.gemini_client import GeminiProviderError
 from app.main import app
 from app.models import Chunk, Document, Message
 
-STRONG_PASSWORD = "Str0ngPass!"
 VECTOR_DIM = 768
 MATCHING_VECTOR = [1.0] + [0.0] * (VECTOR_DIM - 1)
 
@@ -58,21 +57,8 @@ _RAW_PROVIDER_ERROR_TEXT = (
 )
 
 
-def unique_email() -> str:
-    return f"user-{uuid.uuid4().hex}@example.com"
-
-
 def new_client() -> TestClient:
     return TestClient(app, base_url="https://testserver")
-
-
-def signed_up_client() -> TestClient:
-    client = new_client()
-    response = client.post(
-        "/auth/signup", json={"email": unique_email(), "password": STRONG_PASSWORD}
-    )
-    assert response.status_code == 201
-    return client
 
 
 def txt_file(name: str = "notes.txt", content: bytes = b"hello world") -> tuple:
@@ -146,7 +132,7 @@ def persisted_messages(client: TestClient, conversation_id: str) -> list[dict]:
 def test_chat_stream_failing_before_the_first_token_yields_error_and_persists_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
     process_to_ready(document_id, monkeypatch)
     conversation_id = create_conversation(client)
@@ -182,7 +168,7 @@ def test_chat_stream_timeout_yields_error_and_persists_nothing(
     and `test_gemini.py::test_slow_call_times_out_as_typed_error`); this
     asserts the conversations endpoint treats it identically: one fixed
     error event, nothing persisted."""
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
     process_to_ready(document_id, monkeypatch)
     conversation_id = create_conversation(client)
@@ -210,7 +196,7 @@ def test_chat_stream_timeout_yields_error_and_persists_nothing(
 def test_retrieval_embedding_failure_yields_error_and_persists_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
     process_to_ready(document_id, monkeypatch)
     conversation_id = create_conversation(client)
@@ -245,7 +231,7 @@ def test_retrieval_embedding_failure_yields_error_and_persists_nothing(
 def test_same_question_resubmitted_after_a_failure_succeeds_and_persists_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
     process_to_ready(document_id, monkeypatch)
     conversation_id = create_conversation(client)
@@ -294,7 +280,7 @@ def test_same_question_resubmitted_after_a_failure_succeeds_and_persists_once(
 def test_sse_error_event_never_carries_provider_text_stack_trace_or_key_fragment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
     process_to_ready(document_id, monkeypatch)
     conversation_id = create_conversation(client)
@@ -320,7 +306,7 @@ def test_sse_error_event_never_carries_provider_text_stack_trace_or_key_fragment
 def test_failed_document_response_never_carries_provider_text_stack_trace_or_key_fragment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
 
     def boom(key: str) -> bytes:
@@ -376,7 +362,7 @@ def test_embedding_failure_retries_a_bounded_number_of_times_with_backoff_then_f
     fake_models = _FakeEmbedModels()
     monkeypatch.setattr(gemini_client, "_get_client", lambda config: _FakeClient(fake_models))
 
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
     monkeypatch.setattr(
         ingestion_module,
@@ -421,7 +407,7 @@ def test_db_never_persists_a_user_or_assistant_message_for_a_failed_turn(
     """Belt-and-braces check directly against the `Message` table (not just
     the API's view of it) that a failed turn leaves no row at all -- not a
     partially-written one, not a soft-deleted one."""
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
     process_to_ready(document_id, monkeypatch)
     conversation_id = create_conversation(client)

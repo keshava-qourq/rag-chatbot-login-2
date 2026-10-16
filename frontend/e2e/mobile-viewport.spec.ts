@@ -1,28 +1,20 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 
-// Mobile-viewport coverage (US-018-3) for the full journey -- sign-up,
-// login, document library and a conversation -- at a 375x667 viewport.
-// Every test in this file runs at that viewport via `test.use` below, and
-// reuses the same stubbing approach as chat.spec.ts /
-// documents-library.spec.ts: a fresh signed-up account purely for a real,
-// authenticated session, then every response the screen reads is routed and
-// stubbed by hand.
+// Mobile-viewport coverage (US-018-3) for the full journey -- document
+// library and a conversation -- at a 375x667 viewport. Every test in this
+// file runs at that viewport via `test.use` below, and reuses the same
+// stubbing approach as chat.spec.ts / documents-library.spec.ts: open the
+// app (there is no login), then every response the screen reads is routed
+// and stubbed by hand.
 
 test.use({ viewport: { width: 375, height: 667 } });
 
-const STRONG_PASSWORD = "Str0ngPass!";
-
-function uniqueEmail(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}@example.com`;
-}
-
-async function signUpFreshAccount(page: Page, email: string): Promise<void> {
-  await page.goto("/sign-up");
-  await page.getByLabel(/email address/i).fill(email);
-  await page.getByLabel("Password", { exact: true }).fill(STRONG_PASSWORD);
-  await page.getByLabel(/confirm password/i).fill(STRONG_PASSWORD);
-  await page.getByLabel(/answers come only from documents/i).check();
-  await page.getByRole("button", { name: /create account/i }).click();
+// There is no login: opening the app lands straight on the document library.
+// Goes to "/" and lets the app redirect, rather than loading /documents
+// directly: tests stub any URL ending in /documents, which would otherwise
+// intercept the page load itself instead of just the API call.
+async function openTheApp(page: Page): Promise<void> {
+  await page.goto("/");
   await expect(page).toHaveURL(/\/documents/);
 }
 
@@ -44,8 +36,7 @@ async function assertNoHorizontalScroll(page: Page): Promise<void> {
  * would also catch off-canvas sidebar rows translated out of view (still
  * "visible" by Playwright's CSS checks despite being positioned off
  * screen), and inline, sentence-embedded text links (e.g. the chat
- * citation marker, or a short "Log in"/"Create an account" link folded
- * into a line of prose) that are sized by their text rather than a fixed
+ * citation marker, or a short link folded into a line of prose) that are sized by their text rather than a fixed
  * control box -- the common exception for a target embedded in a sentence
  * of text, not a primary action control. */
 async function assertTapTarget(locator: Locator, label: string): Promise<void> {
@@ -165,46 +156,6 @@ async function stubAskQuestion(page: Page, conversationId: string, body: string)
   });
 }
 
-test.describe("Mobile viewport (375x667): sign-up", () => {
-  test("no horizontal scroll and primary controls meet the 44x44 tap-target minimum", async ({
-    page,
-  }) => {
-    await page.goto("/sign-up");
-    await assertNoHorizontalScroll(page);
-
-    await assertTapTarget(
-      page.getByRole("button", { name: /show password/i }),
-      "show password toggle",
-    );
-    await assertTapTarget(page.getByLabel(/answers come only from documents/i), "agree checkbox");
-    await assertTapTarget(
-      page.getByRole("button", { name: /^create account$/i }),
-      "create account button",
-    );
-  });
-});
-
-test.describe("Mobile viewport (375x667): login", () => {
-  test("no horizontal scroll and primary controls meet the 44x44 tap-target minimum", async ({
-    page,
-  }) => {
-    await page.goto("/login");
-    await assertNoHorizontalScroll(page);
-
-    await assertTapTarget(page.getByLabel(/^password$/i), "password field");
-    await assertTapTarget(
-      page.getByRole("button", { name: /show password/i }),
-      "show password toggle",
-    );
-    await assertTapTarget(page.getByLabel(/keep me signed in/i), "remember me checkbox");
-    await assertTapTarget(page.getByRole("button", { name: /^log in$/i }), "log in submit button");
-    await assertTapTarget(
-      page.getByRole("button", { name: /create an account/i }),
-      "create an account button",
-    );
-  });
-});
-
 test.describe("Mobile viewport (375x667): document library", () => {
   test("no horizontal scroll, tap targets, upload and live status display", async ({ page }) => {
     await stubDocumentList(page, [
@@ -233,7 +184,7 @@ test.describe("Mobile viewport (375x667): document library", () => {
       ],
     });
 
-    await signUpFreshAccount(page, uniqueEmail("mobile-docs"));
+    await openTheApp(page);
     await assertNoHorizontalScroll(page);
 
     // Tap targets: the upload affordances and the per-row action controls.
@@ -278,7 +229,7 @@ test.describe("Mobile viewport (375x667): chat", () => {
     await stubDocumentList(page, [READY_DOCUMENT]);
     await stubDocumentEvents(page);
 
-    await signUpFreshAccount(page, uniqueEmail("mobile-chat"));
+    await openTheApp(page);
     await page.goto("/chat");
     await assertNoHorizontalScroll(page);
 
@@ -366,7 +317,7 @@ test.describe("Mobile viewport (375x667): chat", () => {
       });
     await stubAskQuestion(page, "c1", body);
 
-    await signUpFreshAccount(page, uniqueEmail("mobile-chat-answer"));
+    await openTheApp(page);
     await page.goto("/chat");
     await page.getByText("Lease questions").click();
     await assertNoHorizontalScroll(page);

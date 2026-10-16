@@ -18,9 +18,9 @@ describe("GettingStarted", () => {
     expect(screen.getByRole("heading", { name: /getting started/i })).toBeInTheDocument();
   });
 
-  it("covers creating an account, uploading, processing statuses, asking, and citations (AC-058)", () => {
+  it("covers uploading, processing statuses, asking, and citations (AC-058)", () => {
     renderScreen();
-    expect(screen.getByText(/create an account/i)).toBeInTheDocument();
+    expect(screen.queryByText(/create an account/i)).not.toBeInTheDocument();
     expect(screen.getAllByText(/upload/i).length).toBeGreaterThan(0);
     expect(screen.getByText("Queued")).toBeInTheDocument();
     expect(screen.getByText("Processing")).toBeInTheDocument();

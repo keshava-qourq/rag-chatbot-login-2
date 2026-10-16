@@ -40,30 +40,14 @@ export default function GettingStarted() {
           {"Getting started"}
         </h1>
         <p className="mt-1 text-sm text-[var(--brand-fg-muted)]">
-          {
-            "A short walkthrough of creating an account, uploading documents, and asking your first question."
-          }
+          {"A short walkthrough of uploading documents and asking your first question."}
         </p>
       </header>
 
       <div className="flex flex-col gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>{"1. Create an account"}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-[var(--brand-fg-muted)]">
-              {
-                "Sign up with an email address and password. Once you're signed in, your " +
-                  "uploaded documents and conversations are private to your account only."
-              }
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>{"2. Upload a document"}</CardTitle>
+            <CardTitle>{"1. Upload a document"}</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             <p className="text-sm text-[var(--brand-fg-muted)]">
@@ -74,10 +58,8 @@ export default function GettingStarted() {
               >
                 {"Document library"}
               </Link>
-              {
-                " and upload a file. Supported file types are PDF, Word (.docx), Markdown " +
-                  "(.md), and plain text (.txt)."
-              }
+              {" and upload a file. Supported file types are PDF, Word (.docx), Markdown " +
+                "(.md), and plain text (.txt)."}
             </p>
             <ul className="list-disc pl-5 text-sm text-[var(--brand-fg-muted)]">
               <li>{"Maximum size per file: 25 MB."}</li>
@@ -88,7 +70,7 @@ export default function GettingStarted() {
 
         <Card>
           <CardHeader>
-            <CardTitle>{"3. Understand processing status"}</CardTitle>
+            <CardTitle>{"2. Understand processing status"}</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="mb-3 text-sm text-[var(--brand-fg-muted)]">
@@ -107,7 +89,7 @@ export default function GettingStarted() {
 
         <Card>
           <CardHeader>
-            <CardTitle>{"4. Ask your first question"}</CardTitle>
+            <CardTitle>{"3. Ask your first question"}</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-[var(--brand-fg-muted)]">
@@ -120,27 +102,23 @@ export default function GettingStarted() {
               >
                 {"Chat"}
               </Link>
-              {
-                " and ask a question in plain language. The assistant answers using only your " +
-                  "own uploaded documents -- it will say so plainly when the answer isn't in " +
-                  "your documents, rather than guessing or using outside knowledge."
-              }
+              {" and ask a question in plain language. The assistant answers using only your " +
+                "own uploaded documents -- it will say so plainly when the answer isn't in " +
+                "your documents, rather than guessing or using outside knowledge."}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>{"5. Read and check citations"}</CardTitle>
+            <CardTitle>{"4. Read and check citations"}</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-[var(--brand-fg-muted)]">
-              {
-                "Every answer includes numbered citations, like [[1]], pointing back to the " +
-                  "exact document, page, and quoted passage it was drawn from. Open a citation " +
-                  "to check the quoted passage yourself and confirm the answer is supported " +
-                  "by your documents."
-              }
+              {"Every answer includes numbered citations, like [[1]], pointing back to the " +
+                "exact document, page, and quoted passage it was drawn from. Open a citation " +
+                "to check the quoted passage yourself and confirm the answer is supported " +
+                "by your documents."}
             </p>
           </CardContent>
         </Card>

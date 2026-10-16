@@ -39,8 +39,8 @@ function messageFromBody(body: unknown, fallback: string): string {
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
-    // Session auth lives in an HTTP-only cookie, never in JS-reachable
-    // storage -- every request has to carry it, not just the auth ones.
+    // There is no login, so no request depends on a cookie any more; this is
+    // left as it was, and the backend's CORS setup already allows it.
     credentials: "include",
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });

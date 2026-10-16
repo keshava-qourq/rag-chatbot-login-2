@@ -1,9 +1,7 @@
 import * as React from "react";
-import { Link } from "react-router-dom";
 
 import { ApiError } from "@/lib/api";
 import { Icons } from "@/lib/icons";
-import { toPath } from "@/lib/navigate";
 import {
   type GeminiSettings,
   getGeminiSettings,
@@ -25,7 +23,7 @@ import {
 
 const { AlertCircle, CheckCircle } = Icons;
 
-type ScreenState = "loading" | "signed-out" | "error" | "ready";
+type ScreenState = "loading" | "error" | "ready";
 
 function formatDate(iso: string): string {
   const date = new Date(iso);
@@ -53,8 +51,8 @@ function KeyStatus({ settings }: { settings: GeminiSettings }) {
     );
   }
   if (settings.source === "app") {
-    const savedBy = settings.updated_by ? ` by ${settings.updated_by}` : "";
-    const saved = settings.updated_at ? ` Saved ${formatDate(settings.updated_at)}${savedBy}.` : "";
+    // No "by <email>": with no login there is no one account to name.
+    const saved = settings.updated_at ? ` Saved ${formatDate(settings.updated_at)}.` : "";
     return (
       <div className="flex flex-col gap-2">
         <Badge variant="success" className="self-start">
@@ -95,9 +93,9 @@ export default function Settings() {
         setSettings(loaded);
         setScreenState("ready");
       })
-      .catch((err) => {
+      .catch(() => {
         if (cancelled) return;
-        setScreenState(err instanceof ApiError && err.status === 401 ? "signed-out" : "error");
+        setScreenState("error");
       });
     return () => {
       cancelled = true;
@@ -155,18 +153,6 @@ export default function Settings() {
 
       {screenState === "loading" ? (
         <p className="text-sm text-[var(--brand-fg-muted)]">{"Loading settings…"}</p>
-      ) : null}
-
-      {screenState === "signed-out" ? (
-        <div className="rounded-[var(--brand-radius)] border border-slate-200 bg-white p-4 text-sm">
-          <p className="text-[var(--brand-fg)]">{"Log in to manage settings."}</p>
-          <Link
-            to={toPath("login")}
-            className="mt-2 inline-block font-medium text-[var(--brand-primary)] underline"
-          >
-            {"Go to Log in"}
-          </Link>
-        </div>
       ) : null}
 
       {screenState === "error" ? (

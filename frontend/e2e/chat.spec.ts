@@ -4,9 +4,8 @@ import { expect, type Page, test } from "@playwright/test";
 // through routed/stubbed responses for GET /conversations, GET /documents,
 // GET /documents/events, GET /conversations/{id} and POST
 // /conversations/{id}/messages -- mirrors the stubbing approach in
-// documents-library.spec.ts: each test signs up a fresh account purely to
-// obtain a real, authenticated session, then stubs every chat-related
-// response the screen reads. SSE responses are built by hand to match the
+// documents-library.spec.ts: each test opens the app (there is no login),
+// then stubs every chat-related response the screen reads. SSE responses are built by hand to match the
 // token/citations/done/error contract documented in
 // frontend/src/lib/conversations.ts -- the `token` event's payload key is
 // `token` (not `text`), and `done` always carries the full, persisted
@@ -14,19 +13,12 @@ import { expect, type Page, test } from "@playwright/test";
 // `n`, `document` filename, `page` and `quoted_passage`) exactly as
 // `GET /conversations/{id}` would return it on reload.
 
-const STRONG_PASSWORD = "Str0ngPass!";
-
-function uniqueEmail(): string {
-  return `chat-${Date.now()}-${Math.floor(Math.random() * 100000)}@example.com`;
-}
-
-async function signUpFreshAccount(page: Page): Promise<void> {
-  await page.goto("/sign-up");
-  await page.getByLabel(/email address/i).fill(uniqueEmail());
-  await page.getByLabel("Password", { exact: true }).fill(STRONG_PASSWORD);
-  await page.getByLabel(/confirm password/i).fill(STRONG_PASSWORD);
-  await page.getByLabel(/answers come only from documents/i).check();
-  await page.getByRole("button", { name: /create account/i }).click();
+// There is no login: opening the app lands straight on the document library.
+// Goes to "/" and lets the app redirect, rather than loading /documents
+// directly: tests stub any URL ending in /documents, which would otherwise
+// intercept the page load itself instead of just the API call.
+async function openTheApp(page: Page): Promise<void> {
+  await page.goto("/");
   await expect(page).toHaveURL(/\/documents/);
 }
 
@@ -146,7 +138,7 @@ async function stubAskQuestion(
 }
 
 async function openChatAndSelectConversation(page: Page): Promise<void> {
-  await signUpFreshAccount(page);
+  await openTheApp(page);
   await page.goto("/chat");
   await page.getByText("Lease questions").click();
 }
@@ -453,7 +445,7 @@ test.describe("Chat answer experience", () => {
     await stubDocumentList(page, []);
     await stubDocumentEvents(page);
 
-    await signUpFreshAccount(page);
+    await openTheApp(page);
     await page.goto("/chat");
 
     await expect(page.getByText(/nothing to search yet/i)).toBeVisible();

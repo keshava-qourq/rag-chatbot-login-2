@@ -17,7 +17,6 @@ from pypdf import PdfWriter
 import app.ingestion as ingestion
 from app.database import SessionLocal
 from app.models import Chunk, Document, User
-from app.security import hash_password
 
 PDF_MIME = "application/pdf"
 TXT_MIME = "text/plain"
@@ -49,7 +48,7 @@ def make_docx_bytes(paragraphs: list[str]) -> bytes:
 def create_user_and_document(
     session, *, mime_type: str = TXT_MIME, status: str = "queued"
 ) -> Document:
-    user = User(email=f"user-{uuid.uuid4().hex}@example.com", password_hash=hash_password("x"))
+    user = User(email=f"user-{uuid.uuid4().hex}@example.com", password_hash="!")
     session.add(user)
     session.commit()
     session.refresh(user)

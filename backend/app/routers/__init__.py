@@ -7,8 +7,8 @@ auth, persistence and streaming is the development sprint's job, one ticket
 at a time.
 """
 
-from app.routers import auth, conversations, documents, settings
+from app.routers import conversations, documents, settings
 
-routers = [auth.router, documents.router, conversations.router, settings.router]
+routers = [documents.router, conversations.router, settings.router]
 
-__all__ = ["auth", "conversations", "documents", "routers", "settings"]
+__all__ = ["conversations", "documents", "routers", "settings"]

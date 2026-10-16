@@ -1,7 +1,7 @@
 """Settings routes: GET/PUT/DELETE /settings/gemini.
 
-The Gemini API key is one app-wide value, entered on the Settings page by any
-signed-in account and used for every account's uploads and chat. It is stored
+The Gemini API key is one app-wide value, entered on the Settings page by
+anyone using the app (there is no login) and used for every upload and chat. It is stored
 in `app_settings` (see `app.models.AppSetting`) and read by
 `app.gemini_client.resolve_api_key`, which falls back to `GEMINI_API_KEY` in
 the environment when nothing has been saved here.

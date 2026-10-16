@@ -53,8 +53,8 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    # Always stored lowercased (see `app.routers.auth`), which is what makes
-    # the unique constraint case-insensitive.
+    # Unique: `app.security.get_current_user` relies on it so two racing
+    # first requests cannot create two workspace users.
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: CreatedAt = created_at_column()
@@ -71,15 +71,15 @@ class User(Base):
 
 
 class Session(Base):
+    """Login sessions. Unused since the app's login was removed; the table is
+    kept so an existing database needs no migration."""
+
     __tablename__ = "sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    # Indexed: session resolution (the `get_current_user` FastAPI dependency
-    # in app.routers.auth) is a single lookup by this column on every
-    # authenticated request.
     token_hash: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     created_at: CreatedAt = created_at_column()
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

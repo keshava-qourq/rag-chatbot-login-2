@@ -58,8 +58,8 @@ _executor = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_pre
 class GeminiConfigurationError(RuntimeError):
     """Raised when a Gemini call is attempted with no API key configured.
 
-    The app starts without a key (it is entered on the Settings page after
-    sign-in), so callers check `is_configured()` before reaching for the
+    The app starts without a key (it is entered on the Settings page), so
+    callers check `is_configured()` before reaching for the
     model and show a "set a key" message instead of hitting this.
     """
 

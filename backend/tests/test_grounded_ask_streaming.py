@@ -41,27 +41,12 @@ from app.gemini_client import GeminiProviderError
 from app.main import app
 from app.models import Chunk, Citation, Document
 
-STRONG_PASSWORD = "Str0ngPass!"
-
 VECTOR_DIM = 768
 MATCHING_VECTOR = [1.0] + [0.0] * (VECTOR_DIM - 1)
 
 
-def unique_email() -> str:
-    return f"user-{uuid.uuid4().hex}@example.com"
-
-
 def new_client() -> TestClient:
     return TestClient(app, base_url="https://testserver")
-
-
-def signed_up_client() -> TestClient:
-    client = new_client()
-    response = client.post(
-        "/auth/signup", json={"email": unique_email(), "password": STRONG_PASSWORD}
-    )
-    assert response.status_code == 201
-    return client
 
 
 def txt_file(name: str = "notes.txt", content: bytes = b"hello world") -> tuple:
@@ -153,7 +138,7 @@ def stub_chat_stream_yielding(monkeypatch: pytest.MonkeyPatch, answer: str) -> l
 def test_grounded_answer_streams_markers_and_citations_carry_filename_and_page(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client, "eiffel.txt")
     process_to_ready_two_pages(document_id, monkeypatch, "eiffel.txt")
     conversation_id = create_conversation(client)
@@ -196,7 +181,7 @@ def test_grounded_answer_streams_markers_and_citations_carry_filename_and_page(
 def test_marker_outside_given_excerpts_is_dropped_from_stream_and_persistence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client, "notes.txt")
     process_to_ready_two_pages(document_id, monkeypatch, "notes.txt")
     conversation_id = create_conversation(client)
@@ -225,7 +210,7 @@ def test_marker_outside_given_excerpts_is_dropped_from_stream_and_persistence(
 def test_every_persisted_citation_resolves_to_a_chunk_owned_by_the_caller(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client, "notes.txt")
     process_to_ready_two_pages(document_id, monkeypatch, "notes.txt")
     conversation_id = create_conversation(client)
@@ -253,16 +238,6 @@ def test_every_persisted_citation_resolves_to_a_chunk_owned_by_the_caller(
         session.close()
 
 
-def test_another_users_conversation_id_returns_404() -> None:
-    owner_client = signed_up_client()
-    conversation_id = create_conversation(owner_client)
-
-    other_client = signed_up_client()
-    response = ask(other_client, conversation_id, "Anything?")
-
-    assert response.status_code == 404
-
-
 # ---------------------------------------------------------------------------
 # AC-038: after a successful stream, the assistant message and its citations
 # are persisted and are returned by GET /conversations/{id}.
@@ -272,7 +247,7 @@ def test_another_users_conversation_id_returns_404() -> None:
 def test_successful_stream_persists_message_and_citations_returned_by_get(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client, "eiffel.txt")
     process_to_ready_two_pages(document_id, monkeypatch, "eiffel.txt")
     conversation_id = create_conversation(client)
@@ -303,7 +278,7 @@ def test_successful_stream_persists_message_and_citations_returned_by_get(
 def test_provider_error_mid_stream_yields_error_event_and_persists_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client, "eiffel.txt")
     process_to_ready_two_pages(document_id, monkeypatch, "eiffel.txt")
     conversation_id = create_conversation(client)

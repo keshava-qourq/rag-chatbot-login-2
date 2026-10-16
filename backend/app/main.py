@@ -18,7 +18,7 @@ from app.routers import routers
 from app.services import configured_services
 
 # The app starts without a Gemini API key: it is entered on the Settings page
-# after sign-in (see `app.routers.settings`). Until then, uploads fail with a
+# (see `app.routers.settings`). Until then, uploads fail with a
 # "set a key" reason and chat answers with the same instruction.
 
 app = FastAPI(

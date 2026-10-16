@@ -4,9 +4,9 @@ Validates and stores uploaded files (S3, or local disk without a bucket --
 see `app.storage`), creates one `Document` row per
 file with status `queued`, and enqueues an ingestion job to arq -- the
 ingestion ticket (US-007-1) owns the worker that actually extracts, chunks
-and embeds the file. Every query here filters by the session user, resolved
-via `app.security.get_current_user`, so one account can never see or touch
-another's documents.
+and embeds the file. Every query here filters by the user from
+`app.security.get_current_user` -- with no login, that is always the one
+shared workspace user.
 
 Delete is a true purge: the stored file and every `Chunk` row (content
 and embedding) for the document are removed, not just the `Document` row

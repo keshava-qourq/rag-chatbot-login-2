@@ -1,43 +1,53 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 
+function renderAt(path: string) {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <App />
+    </MemoryRouter>,
+  );
+}
+
 describe("App", () => {
+  beforeEach(() => {
+    // The document library loads its list on open; answer with an empty one.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => [] }),
+    );
+  });
+
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it("renders without crashing and shows the first screen's nav link", () => {
-    render(
-      <MemoryRouter>
-        <App />
-      </MemoryRouter>,
+  it("opens straight onto the document library, with no login", () => {
+    renderAt("/");
+
+    expect(screen.getByRole("link", { name: "Document library" })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
-    // getAllByText, not getByText: the first screen's page content may repeat
-    // the text its nav link carries, and two matches must not fail the smoke test.
-    expect(screen.getAllByText("Sign up").length).toBeGreaterThan(0);
   });
 
-  it("has a visible log out control that calls POST /auth/logout and then routes to /login", async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue({ ok: true, status: 204, json: async () => undefined });
-    render(
-      <MemoryRouter initialEntries={["/documents"]}>
-        <App />
-      </MemoryRouter>,
-    );
+  it("has no sign-up, log-in or log-out controls", () => {
+    renderAt("/documents");
 
-    fireEvent.click(screen.getByRole("button", { name: /log out/i }));
+    expect(screen.queryByRole("link", { name: /sign up|log in/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /log out/i })).not.toBeInTheDocument();
+  });
 
-    await waitFor(() =>
-      expect(globalThis.fetch).toHaveBeenCalledWith(
-        expect.stringContaining("/auth/logout"),
-        expect.objectContaining({ method: "POST", credentials: "include" }),
-      ),
+  it.each(["/login", "/sign-up"])("sends an old %s link to the document library", (path) => {
+    renderAt(path);
+
+    expect(screen.getByRole("link", { name: "Document library" })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
-    await waitFor(() => expect(screen.getAllByText("Log in").length).toBeGreaterThan(0));
   });
 });

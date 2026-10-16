@@ -22,7 +22,6 @@ from __future__ import annotations
 import asyncio
 import io
 import json
-import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -32,8 +31,6 @@ import app.routers.conversations as conversations_module
 import app.routers.documents as documents_module
 from app.main import app
 
-STRONG_PASSWORD = "Str0ngPass!"
-
 # Two embedding vectors, deliberately orthogonal, standing in for "matches
 # the document" and "matches nothing in the document" without needing a
 # real embedding model.
@@ -42,21 +39,8 @@ MATCHING_VECTOR = [1.0] + [0.0] * (VECTOR_DIM - 1)
 ORTHOGONAL_VECTOR = [0.0] * (VECTOR_DIM - 1) + [1.0]
 
 
-def unique_email() -> str:
-    return f"user-{uuid.uuid4().hex}@example.com"
-
-
 def new_client() -> TestClient:
     return TestClient(app, base_url="https://testserver")
-
-
-def signed_up_client() -> TestClient:
-    client = new_client()
-    response = client.post(
-        "/auth/signup", json={"email": unique_email(), "password": STRONG_PASSWORD}
-    )
-    assert response.status_code == 201
-    return client
 
 
 def txt_file(name: str = "notes.txt", content: bytes = b"hello world") -> tuple:
@@ -138,7 +122,7 @@ def fake_chat_stream_factory(answer: str, calls: list[list[dict]]):
 def test_followup_question_is_resolved_before_retrieval_embed_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
     process_to_ready(document_id, monkeypatch, MATCHING_VECTOR)
     conversation_id = create_conversation(client)
@@ -206,7 +190,7 @@ def test_followup_question_is_resolved_before_retrieval_embed_call(
 def test_grounded_answer_to_resolved_followup_carries_citations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
     process_to_ready(document_id, monkeypatch, MATCHING_VECTOR)
     conversation_id = create_conversation(client)
@@ -255,7 +239,7 @@ def test_grounded_answer_to_resolved_followup_carries_citations(
 def test_refusal_still_applies_for_resolved_followup_with_no_chunk_above_threshold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
     process_to_ready(document_id, monkeypatch, MATCHING_VECTOR)
     conversation_id = create_conversation(client)
@@ -318,7 +302,7 @@ def test_refusal_still_applies_for_resolved_followup_with_no_chunk_above_thresho
 def test_first_question_in_new_conversation_ignores_other_conversations_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
     process_to_ready(document_id, monkeypatch, MATCHING_VECTOR)
 

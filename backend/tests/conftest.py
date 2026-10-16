@@ -14,8 +14,28 @@ module (in particular `app.database`) is imported.
 
 import os
 import tempfile
+import uuid
+
+import pytest
 
 os.environ.setdefault("GEMINI_API_KEY", "test-placeholder-key")
 os.environ.setdefault(
     "DATABASE_URL", f"sqlite:///{os.path.join(tempfile.mkdtemp(prefix='app-tests-'), 'app.db')}"
 )
+
+
+@pytest.fixture(autouse=True)
+def fresh_workspace_per_test(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give each test its own empty workspace.
+
+    With no login, every request acts as the one shared workspace user, so
+    each test would otherwise see the documents and conversations earlier
+    tests left behind. A unique workspace email per test means the real
+    `app.security.get_current_user` creates a fresh user for each test --
+    without deleting anything from whatever database `DATABASE_URL` names.
+    """
+    import app.security  # deferred: the environment above must be set first
+
+    monkeypatch.setattr(
+        app.security, "WORKSPACE_USER_EMAIL", f"workspace-{uuid.uuid4().hex}@local.invalid"
+    )

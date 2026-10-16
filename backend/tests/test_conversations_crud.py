@@ -27,26 +27,12 @@ from app.database import SessionLocal
 from app.main import app
 from app.models import Chunk, Citation, Document, Message
 
-STRONG_PASSWORD = "Str0ngPass!"
 VECTOR_DIM = 768
 MATCHING_VECTOR = [1.0] + [0.0] * (VECTOR_DIM - 1)
 
 
-def unique_email() -> str:
-    return f"user-{uuid.uuid4().hex}@example.com"
-
-
 def new_client() -> TestClient:
     return TestClient(app, base_url="https://testserver")
-
-
-def signed_up_client() -> TestClient:
-    client = new_client()
-    response = client.post(
-        "/auth/signup", json={"email": unique_email(), "password": STRONG_PASSWORD}
-    )
-    assert response.status_code == 201
-    return client
 
 
 def create_conversation(client: TestClient) -> str:
@@ -97,20 +83,8 @@ def process_to_ready(document_id: str, monkeypatch: pytest.MonkeyPatch, content:
 # ---------------------------------------------------------------------------
 
 
-def test_list_is_scoped_to_the_caller() -> None:
-    owner = signed_up_client()
-    owned_id = create_conversation(owner)
-
-    stranger = signed_up_client()
-    create_conversation(stranger)
-
-    body = owner.get("/conversations").json()
-
-    assert [c["id"] for c in body] == [owned_id]
-
-
 def test_list_orders_by_most_recent_activity_not_creation_order() -> None:
-    client = signed_up_client()
+    client = new_client()
     older_id = create_conversation(client)
     newer_id = create_conversation(client)
 
@@ -134,7 +108,7 @@ def test_list_orders_by_most_recent_activity_not_creation_order() -> None:
 
 
 def test_first_question_sets_the_conversation_title() -> None:
-    client = signed_up_client()
+    client = new_client()
     conversation_id = create_conversation(client)
 
     ask_without_documents(client, conversation_id, "What is the notice period?")
@@ -145,7 +119,7 @@ def test_first_question_sets_the_conversation_title() -> None:
 
 
 def test_title_is_unchanged_by_a_later_message() -> None:
-    client = signed_up_client()
+    client = new_client()
     conversation_id = create_conversation(client)
 
     ask_without_documents(client, conversation_id, "What is the notice period?")
@@ -157,7 +131,7 @@ def test_title_is_unchanged_by_a_later_message() -> None:
 
 
 def test_long_first_question_truncates_the_title() -> None:
-    client = signed_up_client()
+    client = new_client()
     conversation_id = create_conversation(client)
 
     long_question = "What is the exact notice period " + ("and renewal terms " * 10) + "?"
@@ -177,7 +151,7 @@ def test_long_first_question_truncates_the_title() -> None:
 
 
 def test_rename_persists_and_locks_the_title_against_future_auto_titling() -> None:
-    client = signed_up_client()
+    client = new_client()
     conversation_id = create_conversation(client)
 
     response = client.patch(f"/conversations/{conversation_id}", json={"title": "Lease terms"})
@@ -198,7 +172,7 @@ def test_rename_persists_and_locks_the_title_against_future_auto_titling() -> No
 
 @pytest.mark.parametrize("title", ["", "   ", "\n\t"])
 def test_empty_or_whitespace_only_rename_is_rejected(title: str) -> None:
-    client = signed_up_client()
+    client = new_client()
     conversation_id = create_conversation(client)
 
     response = client.patch(f"/conversations/{conversation_id}", json={"title": title})
@@ -217,7 +191,7 @@ def test_rename_with_surrounding_whitespace_stores_the_trimmed_title() -> None:
     the stripped value) would still reject the two parametrized all-
     whitespace cases above while silently storing leading/trailing
     whitespace a user never intended to type as part of the title."""
-    client = signed_up_client()
+    client = new_client()
     conversation_id = create_conversation(client)
 
     response = client.patch(
@@ -236,34 +210,6 @@ def test_rename_with_surrounding_whitespace_stores_the_trimmed_title() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_cross_account_rename_returns_404_and_leaves_title_untouched() -> None:
-    owner = signed_up_client()
-    conversation_id = create_conversation(owner)
-
-    stranger = signed_up_client()
-    response = stranger.patch(f"/conversations/{conversation_id}", json={"title": "Hijacked"})
-
-    assert response.status_code == 404
-    assert response.json()["detail"] == conversations_module._NOT_FOUND_ERROR_MESSAGE
-
-    detail = owner.get(f"/conversations/{conversation_id}").json()
-    assert detail["title"] == "New chat"
-
-
-def test_cross_account_delete_returns_404_and_leaves_conversation_intact() -> None:
-    owner = signed_up_client()
-    conversation_id = create_conversation(owner)
-
-    stranger = signed_up_client()
-    response = stranger.delete(f"/conversations/{conversation_id}")
-
-    assert response.status_code == 404
-    assert response.json()["detail"] == conversations_module._NOT_FOUND_ERROR_MESSAGE
-
-    still_there = owner.get(f"/conversations/{conversation_id}")
-    assert still_there.status_code == 200
-
-
 # ---------------------------------------------------------------------------
 # Delete cascades to messages and citations; documents (and their chunks)
 # survive.
@@ -273,7 +219,7 @@ def test_cross_account_delete_returns_404_and_leaves_conversation_intact() -> No
 def test_delete_cascades_to_messages_and_citations_but_documents_survive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     content = b"The Eiffel Tower is a famous landmark in Paris, France."
     document_id = upload_and_get_id(client, "notes.txt", content)
     process_to_ready(document_id, monkeypatch, content)

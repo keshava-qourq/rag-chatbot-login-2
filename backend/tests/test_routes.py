@@ -14,10 +14,6 @@ client = TestClient(app)
 # (method, path) exactly as the approved API spec declares it, with FastAPI's
 # `{param}` path-parameter syntax.
 EXPECTED_ROUTES = [
-    ("POST", "/auth/signup"),
-    ("POST", "/auth/login"),
-    ("POST", "/auth/logout"),
-    ("GET", "/me"),
     ("POST", "/documents"),
     ("GET", "/documents"),
     ("GET", "/documents/events"),

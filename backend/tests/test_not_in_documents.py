@@ -30,7 +30,6 @@ from __future__ import annotations
 import asyncio
 import io
 import json
-import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -40,28 +39,13 @@ import app.routers.conversations as conversations_module
 import app.routers.documents as documents_module
 from app.main import app
 
-STRONG_PASSWORD = "Str0ngPass!"
-
 VECTOR_DIM = 768
 MATCHING_VECTOR = [1.0] + [0.0] * (VECTOR_DIM - 1)
 ORTHOGONAL_VECTOR = [0.0] * (VECTOR_DIM - 1) + [1.0]
 
 
-def unique_email() -> str:
-    return f"user-{uuid.uuid4().hex}@example.com"
-
-
 def new_client() -> TestClient:
     return TestClient(app, base_url="https://testserver")
-
-
-def signed_up_client() -> TestClient:
-    client = new_client()
-    response = client.post(
-        "/auth/signup", json={"email": unique_email(), "password": STRONG_PASSWORD}
-    )
-    assert response.status_code == 201
-    return client
 
 
 def txt_file(name: str = "notes.txt", content: bytes = b"hello world") -> tuple:
@@ -145,7 +129,7 @@ def refusing_chat_stream(calls: list[list[dict]]):
 def test_no_chunk_above_threshold_yields_refusal_with_no_citations_and_no_model_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
     process_to_ready(document_id, monkeypatch, MATCHING_VECTOR)
     conversation_id = create_conversation(client)
@@ -195,7 +179,7 @@ def test_no_chunk_above_threshold_yields_refusal_with_no_citations_and_no_model_
 def test_general_knowledge_question_gets_refusal_not_the_correct_factual_answer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     document_id = upload_and_get_id(client)
     process_to_ready(
         document_id,
@@ -241,7 +225,7 @@ def test_general_knowledge_question_gets_refusal_not_the_correct_factual_answer(
 def test_zero_documents_yields_distinct_nothing_to_search_message_with_no_model_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = signed_up_client()
+    client = new_client()
     conversation_id = create_conversation(client)
 
     def embed_not_expected(texts, **kwargs):

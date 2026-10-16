@@ -13,19 +13,12 @@ import { expect, type Page, test } from "@playwright/test";
 // whose own `failure_reason` must be visible in the library, not just its
 // "Failed" badge.
 
-const STRONG_PASSWORD = "Str0ngPass!";
-
-function uniqueEmail(): string {
-  return `gemini-fail-${Date.now()}-${Math.floor(Math.random() * 100000)}@example.com`;
-}
-
-async function signUpFreshAccount(page: Page): Promise<void> {
-  await page.goto("/sign-up");
-  await page.getByLabel(/email address/i).fill(uniqueEmail());
-  await page.getByLabel("Password", { exact: true }).fill(STRONG_PASSWORD);
-  await page.getByLabel(/confirm password/i).fill(STRONG_PASSWORD);
-  await page.getByLabel(/answers come only from documents/i).check();
-  await page.getByRole("button", { name: /create account/i }).click();
+// There is no login: opening the app lands straight on the document library.
+// Goes to "/" and lets the app redirect, rather than loading /documents
+// directly: tests stub any URL ending in /documents, which would otherwise
+// intercept the page load itself instead of just the API call.
+async function openTheApp(page: Page): Promise<void> {
+  await page.goto("/");
   await expect(page).toHaveURL(/\/documents/);
 }
 
@@ -104,7 +97,7 @@ function sseEvent(event: string, data: unknown): string {
 }
 
 async function openChatAndSelectConversation(page: Page): Promise<void> {
-  await signUpFreshAccount(page);
+  await openTheApp(page);
   await page.goto("/chat");
   await page.getByText("Lease questions").click();
 }
@@ -197,7 +190,7 @@ test.describe("Gemini outage: failed document in the library", () => {
     ]);
     await stubDocumentEvents(page);
 
-    await signUpFreshAccount(page);
+    await openTheApp(page);
 
     const heading = page.getByText("broken-scan.pdf");
     await expect(heading).toBeVisible();
@@ -226,7 +219,7 @@ test.describe("Gemini outage: failed document in the library", () => {
     ]);
     await stubDocumentEvents(page);
 
-    await signUpFreshAccount(page);
+    await openTheApp(page);
 
     const heading = page.getByText("mystery-failure.pdf");
     await expect(heading).toBeVisible();
