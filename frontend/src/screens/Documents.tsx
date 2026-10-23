@@ -225,22 +225,34 @@ export default function Documents() {
         <Upload size={24} />
         <p className="text-sm text-[var(--brand-fg-muted)]">
           {"Drag and drop files here, or"}{" "}
-          <label
-            htmlFor="document-upload-input"
-            className="inline-flex min-h-11 cursor-pointer items-center font-medium text-[var(--brand-primary)] underline lg:min-h-0"
-          >
-            {"choose documents to upload"}
-          </label>
+          {/* The visible, styled trigger is this <label>; the <input> it is
+              paired with is kept in the accessibility tree (reachable via
+              its own `aria-label`) but made invisible with `opacity-0`
+              rather than clipped to 1x1px (the usual `sr-only` treatment)
+              -- clipping it would leave the control itself, which is what
+              a `getByLabel`-style query resolves to, smaller than the
+              44x44px minimum tap target every interactive control needs on
+              narrow viewports. The wrapping span carries that same floor
+              (`min-h-11`, released at `lg`) so the invisible input sized to
+              `inset-0` always matches it. */}
+          <span className="relative inline-flex min-h-11 items-center lg:min-h-0">
+            <label
+              htmlFor="document-upload-input"
+              className="cursor-pointer font-medium text-[var(--brand-primary)] underline"
+            >
+              {"choose documents to upload"}
+            </label>
+            <input
+              ref={fileInputRef}
+              id="document-upload-input"
+              type="file"
+              multiple
+              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+              aria-label="Choose documents to upload"
+              onChange={handleInputChange}
+            />
+          </span>
         </p>
-        <input
-          ref={fileInputRef}
-          id="document-upload-input"
-          type="file"
-          multiple
-          className="sr-only"
-          aria-label="Choose documents to upload"
-          onChange={handleInputChange}
-        />
         <Button
           type="button"
           size="sm"

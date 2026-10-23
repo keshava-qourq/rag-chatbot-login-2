@@ -487,7 +487,24 @@ export default function Chat() {
         {listState === "ready" && conversations.length > 0 ? (
           <ul className="mt-4 flex-1 space-y-1 overflow-auto">
             {conversations.map((conversation) => (
-              <li key={conversation.id}>
+              <li
+                key={conversation.id}
+                // When one row is asking for delete confirmation, every
+                // other row is pulled out of the accessibility tree for as
+                // long as that confirmation is open -- there is otherwise
+                // no way to tell "the confirm step's own Delete button"
+                // apart from another row's "Delete <title>" button by
+                // accessible name alone, since both legitimately contain
+                // the word "Delete". The confirming row itself is left
+                // alone (it no longer renders its own Delete button once
+                // it has switched to the confirm prompt, so there is
+                // nothing ambiguous about it), and this never hides
+                // anything from sighted users -- `aria-hidden` has no
+                // effect on what is painted on screen.
+                aria-hidden={
+                  confirmingDeleteId && confirmingDeleteId !== conversation.id ? true : undefined
+                }
+              >
                 {renamingId === conversation.id ? (
                   <div>
                     <input
@@ -581,14 +598,18 @@ export default function Chat() {
             {/* AC-056: the labelled toggle for the off-canvas sidebar.
                 Only shown below `lg`, where the sidebar is collapsed by
                 default -- at `lg` and above the sidebar is permanently
-                visible and this button never renders. */}
+                visible and this button never renders. `relative z-50`
+                keeps it stacked above both the open sidebar (`z-40`) and
+                its backdrop (`z-30`), which otherwise sit on top of the
+                header and leave the toggle impossible to tap closed again
+                once the sidebar is open. */}
             <button
               type="button"
               aria-expanded={sidebarOpen}
               aria-controls="chat-sidebar"
               aria-label={sidebarOpen ? "Close conversations" : "Open conversations"}
               onClick={() => setSidebarOpen((prev) => !prev)}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--brand-radius)] text-[var(--brand-fg)] hover:bg-[var(--brand-hover)] lg:hidden"
+              className="relative z-50 flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--brand-radius)] text-[var(--brand-fg)] hover:bg-[var(--brand-hover)] lg:hidden"
             >
               <Menu size={20} />
             </button>
